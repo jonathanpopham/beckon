@@ -28,7 +28,11 @@ mod ffi;
 #[cfg(target_os = "macos")]
 mod hotkey;
 #[cfg(target_os = "macos")]
+mod onboarding;
+#[cfg(target_os = "macos")]
 mod panel;
+#[cfg(target_os = "macos")]
+mod paste;
 #[cfg(target_os = "macos")]
 mod pasteboard;
 #[cfg(target_os = "macos")]
