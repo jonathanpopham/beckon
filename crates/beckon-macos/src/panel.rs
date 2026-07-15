@@ -1,7 +1,8 @@
 //! The launcher panel: a borderless, non-activating floating NSPanel with
-//! a single query text field. It appears above normal windows on every
-//! space, takes keyboard focus without activating the app (the Spotlight
-//! trick), and hides on Escape or on losing key status.
+//! a query text field on top and the results list (ui.rs) beneath it. It
+//! appears above normal windows on every space, takes keyboard focus
+//! without activating the app (the Spotlight trick), and hides on Escape
+//! or on losing key status.
 //!
 //! The panel is a runtime subclass (BeckonPanel) because a borderless
 //! window refuses key status unless canBecomeKeyWindow is overridden, and
@@ -155,6 +156,9 @@ pub fn init(field_delegate: Id) {
 
         PANEL.store(panel, Ordering::Relaxed);
         FIELD.store(field, Ordering::Relaxed);
+
+        // The results table lives in ui.rs; it sits under the field.
+        crate::ui::install(content);
     }
 }
 
@@ -222,6 +226,13 @@ pub fn set_query(text: &str) {
     }
     // Safety: main thread; setStringValue: takes an NSString.
     unsafe { msg!((): field, ffi::sel("setStringValue:"), Id: ffi::nsstring(text)) };
+}
+
+/// The query NSTextField, for callers that need to message it directly
+/// (the smoke test posts the text-did-change notification against it).
+/// Null until init has run.
+pub fn field() -> Id {
+    FIELD.load(Ordering::Relaxed)
 }
 
 /// Read the query field's current text.
