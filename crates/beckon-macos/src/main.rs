@@ -28,6 +28,8 @@ mod hotkey;
 #[cfg(target_os = "macos")]
 mod panel;
 #[cfg(target_os = "macos")]
+mod system;
+#[cfg(target_os = "macos")]
 mod ui;
 
 fn main() {
