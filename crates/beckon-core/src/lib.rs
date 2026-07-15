@@ -22,7 +22,9 @@ pub mod clipstore;
 pub mod frecency;
 pub mod fuzzy;
 pub mod persist;
+pub mod quicklinks;
 pub mod router;
+pub mod snippets;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
