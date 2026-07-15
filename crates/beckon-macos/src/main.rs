@@ -26,6 +26,8 @@ mod engine;
 #[cfg(target_os = "macos")]
 mod ffi;
 #[cfg(target_os = "macos")]
+mod files;
+#[cfg(target_os = "macos")]
 mod hotkey;
 #[cfg(target_os = "macos")]
 mod panel;
