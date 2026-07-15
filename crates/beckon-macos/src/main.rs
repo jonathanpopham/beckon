@@ -3,19 +3,24 @@
 //! This crate is the platform shell: it owns the floating panel, the global
 //! hotkey, the indexers, and the Accessibility integrations, all through
 //! hand-rolled Objective-C runtime FFI (no wrapper crates). All decisions
-//! about what a query means and how results rank live in beckon-core.
+//! about what a query means and how results rank live in beckon-core; the
+//! engine module wires those decisions to the panel.
 //!
 //! Flags: `--version` prints and exits; `--smoke` runs the automated shell
-//! self-test (show the panel, round-trip an NSString, drive the results
-//! list and its callbacks, hide, exit 0) with no user input, proving the
-//! FFI end to end; `--index-apps` (macOS only) prints one
-//! "title<TAB>id<TAB>path" line per indexed application and exits.
+//! self-test with no user input: show the panel, round-trip an NSString,
+//! then drive the real query pipeline end to end (app search rows, the
+//! inline calculator, activation copying to the pasteboard, and frecency
+//! persistence under a temp BECKON_HOME), exiting 0 on success;
+//! `--index-apps` (macOS only) prints one "title<TAB>id<TAB>path" line per
+//! indexed application and exits.
 //!
 //! On non-macOS targets this builds as a stub so the whole workspace
 //! compiles and tests on Linux CI.
 
 #[cfg(target_os = "macos")]
 mod apps;
+#[cfg(target_os = "macos")]
+mod engine;
 #[cfg(target_os = "macos")]
 mod ffi;
 #[cfg(target_os = "macos")]
@@ -56,35 +61,39 @@ fn main() {
 #[cfg(target_os = "macos")]
 mod shell {
     //! macOS wiring: NSApplication bootstrap, the app delegate, and the
-    //! --smoke self-test. Feature logic lives in ffi.rs, panel.rs, and
-    //! hotkey.rs; this module only glues them together.
+    //! --smoke self-test. Feature logic lives in the other modules; this
+    //! module only glues them together.
 
     use crate::ffi::{self, msg, Bool, Id, Sel};
-    use crate::ui::{self, RowData};
-    use crate::{hotkey, panel};
+    use crate::{engine, hotkey, panel, ui};
+    use beckon_core::frecency::FrecencyStore;
     use std::mem::transmute;
-    use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
-    use std::sync::{Mutex, OnceLock};
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     /// NSApplicationActivationPolicyAccessory: no Dock icon, no menu bar;
     /// the panel is the whole interface.
     const ACTIVATION_POLICY_ACCESSORY: isize = 1;
 
+    /// The pasteboard type the engine writes calculator results as (the
+    /// literal value of NSPasteboardTypeString).
+    const PASTEBOARD_TYPE_STRING: &str = "public.utf8-plain-text";
+
     static SMOKE: AtomicBool = AtomicBool::new(false);
     static SMOKE_SHOWED: AtomicBool = AtomicBool::new(false);
-    static SMOKE_RESULTS: AtomicBool = AtomicBool::new(false);
+    static SMOKE_SEARCHED: AtomicBool = AtomicBool::new(false);
+    static SMOKE_CALCED: AtomicBool = AtomicBool::new(false);
+    static SMOKE_FRECENCY: AtomicBool = AtomicBool::new(false);
     static SMOKE_HID: AtomicBool = AtomicBool::new(false);
-    /// Last string the query-changed callback delivered.
-    static SMOKE_QUERY: OnceLock<Mutex<String>> = OnceLock::new();
-    /// Last index the activation callback delivered; -1 means never fired.
-    static SMOKE_ACTIVATED: AtomicIsize = AtomicIsize::new(-1);
-
-    fn smoke_query_slot() -> &'static Mutex<String> {
-        SMOKE_QUERY.get_or_init(|| Mutex::new(String::new()))
-    }
 
     pub fn run(smoke: bool) {
         SMOKE.store(smoke, Ordering::Relaxed);
+        if smoke {
+            // Isolate the smoke run's store: frecency writes land in a
+            // temp dir, never in the real ~/.beckon. Set before
+            // engine::init reads it.
+            let dir = std::env::temp_dir().join(format!("beckon-smoke-{}", std::process::id()));
+            std::env::set_var("BECKON_HOME", &dir);
+        }
         let _pool = ffi::AutoreleasePool::new();
         // Safety: main thread; every msg! spells the documented signature
         // of the NSApplication method it calls.
@@ -96,6 +105,9 @@ mod shell {
             // The query field's delegate (keyboard model) lives in ui.rs;
             // the app delegate here only handles lifecycle and smoke steps.
             panel::init(ui::field_delegate());
+            // The engine registers the query and activation callbacks and
+            // loads its stores; after this the launcher is fully wired.
+            engine::init();
             msg!((): app, ffi::sel("setDelegate:"), Id: delegate);
             // Blocks until terminate; smoke mode exits from its last step.
             msg!((): app, ffi::sel("run"));
@@ -124,8 +136,18 @@ mod shell {
                     "v@:@",
                 ),
                 (
-                    "beckonSmokeResults:",
-                    transmute::<extern "C" fn(Id, Sel, Id), ffi::Imp>(smoke_results),
+                    "beckonSmokeSearch:",
+                    transmute::<extern "C" fn(Id, Sel, Id), ffi::Imp>(smoke_search),
+                    "v@:@",
+                ),
+                (
+                    "beckonSmokeCalc:",
+                    transmute::<extern "C" fn(Id, Sel, Id), ffi::Imp>(smoke_calc),
+                    "v@:@",
+                ),
+                (
+                    "beckonSmokeFrecency:",
+                    transmute::<extern "C" fn(Id, Sel, Id), ffi::Imp>(smoke_frecency),
                     "v@:@",
                 ),
                 (
@@ -153,8 +175,14 @@ mod shell {
     }
 
     /// The hotkey callback handed to Carbon; runs on the main thread.
+    /// Summoning goes through the engine so the panel always comes up
+    /// with a fresh app index, an empty query, and the frecency list.
     extern "C" fn hotkey_pressed() {
-        panel::toggle();
+        if panel::is_visible() {
+            panel::hide();
+        } else {
+            engine::summon();
+        }
     }
 
     extern "C" fn did_finish_launching(this: Id, _sel: Sel, _note: Id) {
@@ -171,55 +199,13 @@ mod shell {
         }
     }
 
-    extern "C" fn smoke_show(this: Id, _sel: Sel, _obj: Id) {
-        panel::show();
-        panel::set_query("beckon smoke");
-        let round_trip = panel::query();
-        let visible = panel::is_visible();
-        let ok = visible && round_trip == "beckon smoke";
-        SMOKE_SHOWED.store(ok, Ordering::Relaxed);
-        println!(
-            "smoke: shown visible={visible} nsstring_roundtrip={:?}",
-            round_trip
-        );
-        // Safety: as in did_finish_launching.
-        unsafe { perform_after(this, "beckonSmokeResults:", 0.2) };
-    }
-
-    /// Drive the results list end to end: rows through the data source,
-    /// the query-changed callback through the real notification path, and
-    /// selection movement plus activation through the real delegate hook.
-    extern "C" fn smoke_results(this: Id, _sel: Sel, _obj: Id) {
-        let mut ok = true;
-
-        // Three fake rows; the table must report them via the data source
-        // and the selection must reset to row 0.
-        ui::set_items(&[
-            RowData {
-                title: "Calculator".into(),
-                subtitle: "2+2 = 4".into(),
-            },
-            RowData {
-                title: "Safari".into(),
-                subtitle: "Application".into(),
-            },
-            RowData {
-                title: "Lock Screen".into(),
-                subtitle: "System".into(),
-            },
-        ]);
-        let rows = ui::row_count();
-        let initial = ui::selected_index();
-        if rows != 3 || initial != Some(0) {
-            ok = false;
-        }
-        println!("smoke: results rows={rows} initial_selection={initial:?}");
-
-        // Query-changed callback: set the field text, then post the same
-        // notification the field editor posts on user edits; NSControl
-        // auto-subscribed the ui.rs delegate when panel::init set it.
-        ui::set_on_query_changed(|q| *smoke_query_slot().lock().unwrap() = q);
-        panel::set_query("calc 2+2");
+    /// Drive the query pipeline exactly the way a user edit does: set the
+    /// field text, then post the notification the field editor posts;
+    /// NSControl auto-subscribed the ui.rs delegate when panel::init set
+    /// it. (Programmatic setStringValue: never fires the callback on its
+    /// own.)
+    fn type_query(text: &str) {
+        panel::set_query(text);
         // Safety: main thread; postNotificationName:object: takes an
         // NSString name and a nullable object.
         unsafe {
@@ -228,38 +214,130 @@ mod shell {
                 Id: ffi::nsstring("NSControlTextDidChangeNotification"),
                 Id: panel::field());
         }
-        let seen = smoke_query_slot().lock().unwrap().clone();
-        if seen != "calc 2+2" {
-            ok = false;
-        }
-        println!("smoke: query_changed callback saw {seen:?}");
+    }
 
-        // moveDown then Return through the delegate's real command hook.
-        ui::set_on_activate(|i| SMOKE_ACTIVATED.store(i as isize, Ordering::Relaxed));
+    /// Send a command selector through the field delegate's real keyboard
+    /// hook, the same path arrow keys and Return take from the field
+    /// editor. Returns whether the delegate swallowed it.
+    fn send_command(name: &str) -> bool {
         let delegate = ui::field_delegate();
         // Safety: main thread; the delegate implements the method with
         // encoding c@:@@: and tolerates a nil text view.
-        let (down_handled, return_handled) = unsafe {
-            let down = msg!(Bool: delegate,
+        unsafe {
+            msg!(Bool: delegate,
                 ffi::sel("control:textView:doCommandBySelector:"),
-                Id: panel::field(), Id: ffi::NIL, Sel: ffi::sel("moveDown:"));
-            let ret = msg!(Bool: delegate,
-                ffi::sel("control:textView:doCommandBySelector:"),
-                Id: panel::field(), Id: ffi::NIL, Sel: ffi::sel("insertNewline:"));
-            (down != 0, ret != 0)
-        };
-        let selected = ui::selected_index();
-        let activated = SMOKE_ACTIVATED.load(Ordering::Relaxed);
-        if !down_handled || !return_handled || selected != Some(1) || activated != 1 {
-            ok = false;
+                Id: panel::field(), Id: ffi::NIL, Sel: ffi::sel(name))
+                != 0
         }
-        println!(
-            "smoke: moveDown handled={down_handled} selection={selected:?} \
-             return handled={return_handled} activated_index={activated}"
-        );
+    }
 
-        SMOKE_RESULTS.store(ok, Ordering::Relaxed);
-        println!("smoke: results {}", if ok { "OK" } else { "FAILED" });
+    /// Read the general pasteboard's plain-text contents back via FFI.
+    fn read_pasteboard() -> String {
+        // Safety: main thread; stringForType: takes an NSString type and
+        // returns an NSString or nil, which nsstring_to_string accepts.
+        unsafe {
+            let pb = msg!(Id: ffi::class("NSPasteboard"), ffi::sel("generalPasteboard"));
+            let ns = msg!(Id: pb, ffi::sel("stringForType:"),
+                Id: ffi::nsstring(PASTEBOARD_TYPE_STRING));
+            ffi::nsstring_to_string(ns)
+        }
+    }
+
+    /// Step 1: summon through the engine (fresh index, empty query, the
+    /// default frecency list showing) and round-trip an NSString through
+    /// the query field.
+    extern "C" fn smoke_show(this: Id, _sel: Sel, _obj: Id) {
+        engine::summon();
+        let visible = panel::is_visible();
+        let default_rows = ui::row_count();
+        panel::set_query("beckon smoke");
+        let round_trip = panel::query();
+        let ok = visible && default_rows > 0 && round_trip == "beckon smoke";
+        SMOKE_SHOWED.store(ok, Ordering::Relaxed);
+        println!(
+            "smoke: shown visible={visible} default_rows={default_rows} \
+             nsstring_roundtrip={round_trip:?}"
+        );
+        // Safety: as in did_finish_launching.
+        unsafe { perform_after(this, "beckonSmokeSearch:", 0.2) };
+    }
+
+    /// Step 2: an app search end to end. This machine has Safari, so the
+    /// query "safari" must produce rows with Safari on top, and moveDown
+    /// must drive the selection through the real delegate hook.
+    extern "C" fn smoke_search(this: Id, _sel: Sel, _obj: Id) {
+        type_query("safari");
+        let rows = ui::row_count();
+        let top = ui::row_at(0).unwrap_or_default();
+        let down_handled = send_command("moveDown:");
+        let selected = ui::selected_index();
+        // With a single row, moveDown wraps back to 0; either way the
+        // delegate must have swallowed the command.
+        let selection_ok = selected == Some(if rows > 1 { 1 } else { 0 });
+        let ok = rows > 0 && top.title.contains("Safari") && down_handled && selection_ok;
+        SMOKE_SEARCHED.store(ok, Ordering::Relaxed);
+        println!(
+            "smoke: search rows={rows} top_title={:?} top_subtitle={:?} \
+             moveDown handled={down_handled} selection={selected:?}",
+            top.title, top.subtitle
+        );
+        // Safety: as in did_finish_launching.
+        unsafe { perform_after(this, "beckonSmokeCalc:", 0.2) };
+    }
+
+    /// Step 3: the inline calculator end to end. "2+2" must produce
+    /// exactly one row titled "4"; activating it through the real Return
+    /// hook must copy "4" to the pasteboard and hide the panel.
+    extern "C" fn smoke_calc(this: Id, _sel: Sel, _obj: Id) {
+        type_query("2+2");
+        let rows = ui::row_count();
+        let top = ui::row_at(0).unwrap_or_default();
+        let return_handled = send_command("insertNewline:");
+        let pasted = read_pasteboard();
+        let hidden = !panel::is_visible();
+        let ok = rows == 1 && top.title == "4" && return_handled && pasted == "4" && hidden;
+        SMOKE_CALCED.store(ok, Ordering::Relaxed);
+        println!(
+            "smoke: calc rows={rows} top_title={:?} return handled={return_handled} \
+             pasteboard={pasted:?} hidden_after_activate={hidden}",
+            top.title
+        );
+        // Safety: as in did_finish_launching.
+        unsafe { perform_after(this, "beckonSmokeFrecency:", 0.2) };
+    }
+
+    /// Step 4: the frecency persistence path, exactly as an app launch
+    /// exercises it (record_use plus atomic save), minus the launch
+    /// itself; the file lands under the temp BECKON_HOME and must parse
+    /// back with the recorded id scoring above zero.
+    extern "C" fn smoke_frecency(this: Id, _sel: Sel, _obj: Id) {
+        let recorded = engine::record_use_now("beckon.smoke.item");
+        let path = beckon_core::persist::store_root().join("frecency.txt");
+        let ok = match (&recorded, std::fs::read_to_string(&path)) {
+            (Ok(()), Ok(text)) => match text.parse::<FrecencyStore>() {
+                // now = 0 never decays (elapsed saturates at zero), so
+                // this reads the raw recorded deposit.
+                Ok(store) => store.score("beckon.smoke.item", 0) > 0,
+                Err(e) => {
+                    eprintln!("smoke: frecency file did not parse: {e}");
+                    false
+                }
+            },
+            (Err(e), _) => {
+                eprintln!("smoke: record_use_now failed: {e}");
+                false
+            }
+            (_, Err(e)) => {
+                eprintln!("smoke: frecency file unreadable: {e}");
+                false
+            }
+        };
+        SMOKE_FRECENCY.store(ok, Ordering::Relaxed);
+        println!(
+            "smoke: frecency recorded={} file={} parsed_score_positive={ok}",
+            recorded.is_ok(),
+            path.display()
+        );
         // Safety: as in did_finish_launching.
         unsafe { perform_after(this, "beckonSmokeHide:", 0.2) };
     }
@@ -274,8 +352,14 @@ mod shell {
     }
 
     extern "C" fn smoke_exit(_this: Id, _sel: Sel, _obj: Id) {
+        // Clean up the temp store dir the smoke run pointed BECKON_HOME at.
+        if let Some(dir) = std::env::var_os("BECKON_HOME") {
+            let _ = std::fs::remove_dir_all(dir);
+        }
         let ok = SMOKE_SHOWED.load(Ordering::Relaxed)
-            && SMOKE_RESULTS.load(Ordering::Relaxed)
+            && SMOKE_SEARCHED.load(Ordering::Relaxed)
+            && SMOKE_CALCED.load(Ordering::Relaxed)
+            && SMOKE_FRECENCY.load(Ordering::Relaxed)
             && SMOKE_HID.load(Ordering::Relaxed);
         println!("smoke: {}", if ok { "PASS" } else { "FAIL" });
         std::process::exit(if ok { 0 } else { 1 });

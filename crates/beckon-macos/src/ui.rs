@@ -399,6 +399,12 @@ pub fn activate_selected() {
     }
 }
 
+/// Copy of the row at `index`, or None past the end. Main thread only;
+/// the smoke test uses this to assert what the table is showing.
+pub fn row_at(index: usize) -> Option<RowData> {
+    items().lock().unwrap().get(index).cloned()
+}
+
 /// Ask the table itself how many rows it has; this round-trips through
 /// the data source, which is what the smoke test wants to prove.
 pub fn row_count() -> usize {

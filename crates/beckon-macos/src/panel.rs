@@ -200,14 +200,6 @@ pub fn hide() {
     unsafe { msg!((): panel, ffi::sel("orderOut:"), Id: ffi::NIL) };
 }
 
-pub fn toggle() {
-    if is_visible() {
-        hide();
-    } else {
-        show();
-    }
-}
-
 pub fn is_visible() -> bool {
     let panel = PANEL.load(Ordering::Relaxed);
     if panel.is_null() {
