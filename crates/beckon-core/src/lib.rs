@@ -17,8 +17,11 @@
 //!   quicklinks parameterized links
 //!   persist    canonical JSON codec and atomic file store
 
+pub mod calc;
+pub mod clipstore;
 pub mod frecency;
 pub mod fuzzy;
+pub mod persist;
 pub mod router;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
