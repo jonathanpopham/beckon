@@ -1,0 +1,13 @@
+[package]
+name = "beckon-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Deterministic engine for the beckon launcher: matching, ranking, routing, stores. std only."
+
+# std only. No dependencies, ever. The gate enforces this.
+[dependencies]
+
+[lints]
+workspace = true

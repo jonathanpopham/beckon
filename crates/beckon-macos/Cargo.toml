@@ -1,0 +1,18 @@
+[package]
+name = "beckon-macos"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "macOS shell for beckon: panel window, hotkeys, indexers, accessibility. Hand-rolled Objective-C FFI, std only."
+
+[[bin]]
+name = "beckon"
+path = "src/main.rs"
+
+# std only. Platform frameworks are linked directly, not wrapped by crates.
+[dependencies]
+beckon-core = { path = "../beckon-core" }
+
+[lints]
+workspace = true
