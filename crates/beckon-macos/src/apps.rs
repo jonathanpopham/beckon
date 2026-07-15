@@ -185,9 +185,6 @@ pub fn index() -> Vec<Item> {
 /// synchronous preconditions only (no bundle at the path); the open
 /// itself is asynchronous with a nil completion handler, as documented
 /// in the module header.
-// dead_code: the UI action path that calls this lands in a later wave;
-// today it is exercised by the tests below and the hardware check.
-#[allow(dead_code)]
 pub fn launch(path: &str) -> Result<(), String> {
     if !path.ends_with(".app") {
         return Err(format!("not an .app bundle: {path}"));
