@@ -20,6 +20,8 @@
 #[cfg(target_os = "macos")]
 mod apps;
 #[cfg(target_os = "macos")]
+mod ax;
+#[cfg(target_os = "macos")]
 mod engine;
 #[cfg(target_os = "macos")]
 mod ffi;
@@ -29,6 +31,8 @@ mod hotkey;
 mod panel;
 #[cfg(target_os = "macos")]
 mod ui;
+#[cfg(target_os = "macos")]
+mod winmgmt;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
