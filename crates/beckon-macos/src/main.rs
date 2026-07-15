@@ -32,6 +32,8 @@ mod panel;
 #[cfg(target_os = "macos")]
 mod pasteboard;
 #[cfg(target_os = "macos")]
+mod switcher;
+#[cfg(target_os = "macos")]
 mod system;
 #[cfg(target_os = "macos")]
 mod ui;

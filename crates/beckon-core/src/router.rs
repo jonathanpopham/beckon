@@ -90,6 +90,8 @@ pub enum ItemKind {
     Quicklink,
     /// A user script from `~/.beckon/scripts/`.
     Script,
+    /// An open window of a running application (the window switcher).
+    Window,
 }
 
 /// One searchable, launchable entry in the registry.
