@@ -15,10 +15,14 @@
 //!   clipstore  clipboard history model
 //!   snippets   snippet store and placeholder expansion
 //!   quicklinks parameterized links
+//!   emoji      curated emoji and symbol picker table plus keyword search
+//!   devutil    one-shot developer transforms (uuid, base64, hashes, dates)
 //!   persist    canonical JSON codec and atomic file store
 
 pub mod calc;
 pub mod clipstore;
+pub mod devutil;
+pub mod emoji;
 pub mod frecency;
 pub mod fuzzy;
 pub mod persist;
