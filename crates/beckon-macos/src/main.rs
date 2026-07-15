@@ -302,17 +302,33 @@ mod shell {
         type_query("win");
         let win_rows = ui::row_count();
         let switcher_ok = win_rows > 0;
+        // The M3 triggers, all deterministic core sources: emoji search,
+        // a dev utility, the default snippets, and a filled quicklink.
+        type_query("emoji fire");
+        let emoji_ok = ui::row_at(0).unwrap_or_default().title.contains("fire");
+        type_query("uuid");
+        let uuid_title = ui::row_at(0).unwrap_or_default().title;
+        let uuid_ok =
+            ui::row_count() == 1 && uuid_title.len() == 36 && uuid_title.matches('-').count() == 4;
+        type_query("snip");
+        let snip_ok = ui::row_count() > 0;
+        type_query("go google rust launcher");
+        let go_sub = ui::row_at(0).unwrap_or_default().subtitle;
+        let go_ok = go_sub.contains("q=rust%20launcher");
+        let m3_ok = emoji_ok && uuid_ok && snip_ok && go_ok;
         let ok = rows > 0
             && top.title.contains("Safari")
             && down_handled
             && selection_ok
             && commands_ok
-            && switcher_ok;
+            && switcher_ok
+            && m3_ok;
         SMOKE_SEARCHED.store(ok, Ordering::Relaxed);
         println!(
             "smoke: search rows={rows} top_title={:?} top_subtitle={:?} \
              moveDown handled={down_handled} selection={selected:?} \
-             command_top={:?} switcher_rows={win_rows}",
+             command_top={:?} switcher_rows={win_rows} emoji_ok={emoji_ok} \
+             uuid_ok={uuid_ok} snip_ok={snip_ok} go_ok={go_ok}",
             top.title, top.subtitle, cmd_top.title
         );
         // Safety: as in did_finish_launching.

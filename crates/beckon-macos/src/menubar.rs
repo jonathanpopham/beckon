@@ -43,11 +43,6 @@
 //! title" text and returns at most [`MAX_RESULTS`]; disabled items are
 //! excluded. [`activate`] performs AXPress on one row by id.
 
-// Wired into the engine by the integrator; until that lands nothing in
-// main calls this module, so the dead-code lint is silenced file-wide.
-// Remove the allow with the first caller.
-#![allow(dead_code)]
-
 use crate::ax::{self, AXError, Boolean, CFIndex, CFStringRef, CFTypeRef, CfGuard};
 use beckon_core::fuzzy;
 use beckon_core::router::{Item, ItemKind};

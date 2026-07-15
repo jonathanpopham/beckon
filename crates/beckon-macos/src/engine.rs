@@ -30,11 +30,15 @@
 //! 7 ms warm, well under the 50 ms budget for a show.
 
 use crate::ffi::{self, msg, Bool, Id};
-use crate::{apps, files, onboarding, panel, paste, pasteboard, switcher, system, ui, winmgmt};
-use beckon_core::calc;
+use crate::{
+    apps, files, menubar, onboarding, panel, paste, pasteboard, switcher, system, ui, winmgmt,
+};
 use beckon_core::frecency::FrecencyStore;
 use beckon_core::persist;
+use beckon_core::quicklinks::{self, QuicklinkStore};
 use beckon_core::router::{self, Item, QueryIntent};
+use beckon_core::snippets::{self, ExpandContext, SnippetStore};
+use beckon_core::{calc, devutil, emoji};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
@@ -45,6 +49,10 @@ const MAX_RESULTS: usize = 9;
 
 /// The frecency store file, under the beckon store root.
 const FRECENCY_FILE: &str = "frecency.txt";
+
+/// Snippet and quicklink store files, under the beckon store root.
+const SNIPPETS_FILE: &str = "snippets.json";
+const QUICKLINKS_FILE: &str = "quicklinks.json";
 
 /// What activating a result row does. One entry per visible row, in row
 /// order; see the module docs for why this mirrors the table race free.
@@ -65,6 +73,14 @@ enum Entry {
     Window { id: String },
     /// Open a file search hit.
     File { id: String },
+    /// Press a menu item of the frontmost app.
+    Menu { id: String },
+    /// Paste an emoji or symbol glyph.
+    Emoji { glyph: String },
+    /// Expand a snippet and paste the expansion.
+    Snippet { id: u64 },
+    /// Open a filled quicklink URL in the default browser.
+    Link { id: u64, url: String },
 }
 
 struct Engine {
@@ -75,6 +91,10 @@ struct Engine {
     commands: Vec<Item>,
     frecency: FrecencyStore,
     frecency_path: PathBuf,
+    snippets: SnippetStore,
+    snippets_path: PathBuf,
+    quicklinks: QuicklinkStore,
+    quicklinks_path: PathBuf,
     /// Activation targets for the rows currently in the table.
     results: Vec<Entry>,
 }
@@ -159,6 +179,31 @@ pub fn init() {
     // edge so the file stays small. Scores are unchanged (they were 0).
     frecency.prune(now_secs());
 
+    let snippets_path = root.join(SNIPPETS_FILE);
+    let snippets = match SnippetStore::load(&snippets_path) {
+        Ok(Some(store)) => store,
+        Ok(None) => snippets::defaults(),
+        Err(e) => {
+            eprintln!(
+                "beckon: corrupt snippet store {}: {e:?}; using defaults",
+                snippets_path.display()
+            );
+            snippets::defaults()
+        }
+    };
+    let quicklinks_path = root.join(QUICKLINKS_FILE);
+    let quicklinks = match QuicklinkStore::load(&quicklinks_path) {
+        Ok(Some(store)) => store,
+        Ok(None) => quicklinks::defaults(),
+        Err(e) => {
+            eprintln!(
+                "beckon: corrupt quicklink store {}: {e:?}; using defaults",
+                quicklinks_path.display()
+            );
+            quicklinks::defaults()
+        }
+    };
+
     let mut commands = system::items();
     commands.extend(winmgmt::items());
     // Present only while Accessibility is not granted; self-retires on
@@ -173,6 +218,10 @@ pub fn init() {
             commands,
             frecency,
             frecency_path,
+            snippets,
+            snippets_path,
+            quicklinks,
+            quicklinks_path,
             results: Vec::new(),
         }))
         .is_err()
@@ -200,6 +249,10 @@ pub fn summon() {
     // Kick a background re-walk so file results track the disk; the call
     // coalesces if a walk is already running.
     files::refresh();
+    // The panel is non-activating, so the app the user is in stays
+    // frontmost: snapshot its menu bar now, once per show, so the "menu"
+    // trigger serves from cache at typing speed.
+    menubar::snapshot_frontmost();
     panel::set_query("");
     handle_query("");
     panel::show();
@@ -231,7 +284,26 @@ impl Engine {
                 "clip" | "clipboard" => return self.clip_rows(rest),
                 "win" | "windows" => return self.window_rows(rest),
                 "file" | "find" => return self.file_rows(rest),
+                "menu" => return self.menu_rows(rest),
+                "emoji" => return self.emoji_rows(rest),
+                "snip" | "snippet" => return self.snippet_rows(rest),
+                "go" => return self.quicklink_rows(rest),
                 _ => {}
+            }
+        }
+        // Developer transforms answer launcher phrasings like "uuid",
+        // "b64 hello", "sha256 abc"; unknown prefixes fall through to the
+        // normal pipeline.
+        // A malformed argument ("epoch banana") falls through to app
+        // search rather than showing an error row.
+        if let Some((util, arg)) = devutil::parse_command(trimmed) {
+            if let Ok(output) = devutil::run(util, &arg, now, &urandom16()) {
+                let row = ui::RowData {
+                    title: output.clone(),
+                    subtitle: format!("{trimmed} (press Return to copy)"),
+                };
+                self.results = vec![Entry::Calc { display: output }];
+                return vec![row];
             }
         }
         match QueryIntent::parse(raw) {
@@ -315,6 +387,88 @@ impl Engine {
                 title: "Indexing files...".to_string(),
                 subtitle: "results appear as the walk finishes".to_string(),
             });
+        }
+        rows
+    }
+
+    /// Rows for the menu trigger: the frontmost app's menu items from the
+    /// summon-time snapshot, breadcrumb subtitles, AXPress on Return.
+    fn menu_rows(&mut self, query: &str) -> Vec<ui::RowData> {
+        let items = menubar::items(query);
+        self.trigger_rows(items, |id| Entry::Menu { id })
+    }
+
+    /// Rows for the emoji trigger: the curated table, activation pastes
+    /// the glyph.
+    fn emoji_rows(&mut self, query: &str) -> Vec<ui::RowData> {
+        let hits = emoji::search(query, MAX_RESULTS);
+        self.results.clear();
+        let mut rows = Vec::new();
+        for e in hits {
+            rows.push(ui::RowData {
+                title: format!("{} {}", e.glyph, e.name),
+                subtitle: e.keywords.to_string(),
+            });
+            self.results.push(Entry::Emoji {
+                glyph: e.glyph.to_string(),
+            });
+        }
+        rows
+    }
+
+    /// Rows for the snippet trigger: name and keyword matches; the body
+    /// preview rides in the subtitle. Activation expands and pastes.
+    fn snippet_rows(&mut self, query: &str) -> Vec<ui::RowData> {
+        let hits: Vec<(u64, String, String)> = self
+            .snippets
+            .search(query)
+            .into_iter()
+            .take(MAX_RESULTS)
+            .map(|s| {
+                let head: String = s.body.chars().take(40).collect();
+                (s.id, s.name.clone(), format!("{} · {head}", s.keyword))
+            })
+            .collect();
+        self.results.clear();
+        let mut rows = Vec::new();
+        for (id, name, subtitle) in hits {
+            rows.push(ui::RowData {
+                title: name,
+                subtitle,
+            });
+            self.results.push(Entry::Snippet { id });
+        }
+        rows
+    }
+
+    /// Rows for the quicklink trigger: "go <name> <query...>", first word
+    /// picks the link, the rest fills {query}. Activation opens the URL.
+    fn quicklink_rows(&mut self, query: &str) -> Vec<ui::RowData> {
+        let (name, fill_query) = match query.split_once(char::is_whitespace) {
+            Some((n, rest)) => (n, rest.trim()),
+            None => (query, ""),
+        };
+        let hits: Vec<(u64, String, String)> = self
+            .quicklinks
+            .search(name)
+            .into_iter()
+            .take(MAX_RESULTS)
+            .map(|q| {
+                (
+                    q.id,
+                    q.name.clone(),
+                    quicklinks::fill(&q.template, fill_query),
+                )
+            })
+            .collect();
+        self.results.clear();
+        let mut rows = Vec::new();
+        for (id, name, url) in hits {
+            rows.push(ui::RowData {
+                title: name,
+                subtitle: url.clone(),
+            });
+            self.results.push(Entry::Link { id, url });
         }
         rows
     }
@@ -410,6 +564,72 @@ fn handle_activate(index: usize) {
             Ok(()) => dismiss(),
             Err(e) => eprintln!("beckon: open failed: {e}"),
         },
+        Entry::Menu { id } => match menubar::activate(&id) {
+            Ok(()) => dismiss(),
+            Err(e) => eprintln!("beckon: menu press failed: {e}"),
+        },
+        Entry::Emoji { glyph } => copy_then_paste(&glyph),
+        Entry::Snippet { id } => {
+            let expanded = {
+                let mut eng = engine().lock().unwrap();
+                let Some(snippet) = eng.snippets.get(id) else {
+                    eprintln!("beckon: snippet {id} vanished");
+                    return;
+                };
+                let ctx = ExpandContext {
+                    now_secs: now_secs(),
+                    clipboard: read_clipboard(),
+                };
+                let expanded = match snippets::expand(&snippet.body, &ctx) {
+                    Ok(ex) => ex,
+                    Err(e) => {
+                        eprintln!("beckon: snippet expansion failed: {e:?}");
+                        return;
+                    }
+                };
+                // Cursor placement needs post-paste key synthesis; until
+                // that lands the marker is simply removed. Documented in
+                // the snippets module grammar.
+                eng.snippets.record_use(id, now_secs());
+                let path = eng.snippets_path.clone();
+                if let Err(e) = eng.snippets.save(&path) {
+                    eprintln!("beckon: snippet store save failed: {e:?}");
+                }
+                expanded
+            };
+            copy_then_paste(&expanded.text);
+        }
+        Entry::Link { id, url } => {
+            if open_url(&url) {
+                let mut eng = engine().lock().unwrap();
+                eng.quicklinks.record_use(id);
+                let path = eng.quicklinks_path.clone();
+                if let Err(e) = eng.quicklinks.save(&path) {
+                    eprintln!("beckon: quicklink store save failed: {e:?}");
+                }
+                drop(eng);
+                dismiss();
+            } else {
+                eprintln!("beckon: could not open {url}");
+            }
+        }
+    }
+}
+
+/// Copy `text` to the pasteboard and paste it into the frontmost app:
+/// the shared activation path for emoji and snippets. The panel hides
+/// first (it is non-activating, so the target app already holds key
+/// focus); without the Accessibility grant the paste refuses cleanly and
+/// the text stays on the clipboard.
+fn copy_then_paste(text: &str) {
+    if copy_to_clipboard(text) {
+        pasteboard::note_own_write();
+        dismiss();
+        if let Err(e) = paste::paste_to_frontmost() {
+            eprintln!("beckon: paste skipped: {e}");
+        }
+    } else {
+        eprintln!("beckon: pasteboard write failed");
     }
 }
 
@@ -457,4 +677,60 @@ fn copy_to_clipboard(text: &str) -> bool {
             Id: ffi::nsstring("public.utf8-plain-text"))
             != 0
     }
+}
+
+/// Read the general pasteboard's plain-text contents, for snippet
+/// {clipboard} expansion. None when the pasteboard holds no string.
+fn read_clipboard() -> Option<String> {
+    // Safety: main thread; stringForType: returns an NSString or nil and
+    // nsstring_to_string accepts both (nil becomes the empty string).
+    unsafe {
+        let pb = msg!(Id: ffi::class("NSPasteboard"), ffi::sel("generalPasteboard"));
+        let ns = msg!(Id: pb, ffi::sel("stringForType:"),
+            Id: ffi::nsstring("public.utf8-plain-text"));
+        if ns == ffi::NIL {
+            None
+        } else {
+            Some(ffi::nsstring_to_string(ns))
+        }
+    }
+}
+
+/// Open a URL with the user's default handler via NSWorkspace. This is
+/// user-initiated navigation in the browser, not a network call by the
+/// beckon binary itself, so the airgap posture holds.
+fn open_url(url: &str) -> bool {
+    // Safety: main thread; URLWithString: returns an NSURL or nil;
+    // openURL: takes an NSURL and returns BOOL.
+    unsafe {
+        let nsurl = msg!(Id: ffi::class("NSURL"), ffi::sel("URLWithString:"),
+            Id: ffi::nsstring(url));
+        if nsurl == ffi::NIL {
+            return false;
+        }
+        let ws = msg!(Id: ffi::class("NSWorkspace"), ffi::sel("sharedWorkspace"));
+        msg!(Bool: ws, ffi::sel("openURL:"), Id: nsurl) != 0
+    }
+}
+
+/// Sixteen bytes of OS entropy for the uuid utility, read from
+/// /dev/urandom (plain std::fs, airgap clean). A read failure degrades
+/// to a time-and-pid mix rather than an error; the uuid utility is a
+/// convenience, not a security boundary, as its docs state.
+fn urandom16() -> [u8; 16] {
+    use std::io::Read;
+    let mut buf = [0u8; 16];
+    let ok = std::fs::File::open("/dev/urandom")
+        .and_then(|mut f| f.read_exact(&mut buf))
+        .is_ok();
+    if !ok {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.subsec_nanos() as u64)
+            .unwrap_or(0);
+        let mix = nanos ^ ((std::process::id() as u64) << 32) ^ now_secs();
+        buf[..8].copy_from_slice(&mix.to_le_bytes());
+        buf[8..].copy_from_slice(&mix.rotate_left(29).to_le_bytes());
+    }
+    buf
 }
