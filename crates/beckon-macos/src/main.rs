@@ -30,6 +30,8 @@ mod files;
 #[cfg(target_os = "macos")]
 mod hotkey;
 #[cfg(target_os = "macos")]
+mod menubar;
+#[cfg(target_os = "macos")]
 mod onboarding;
 #[cfg(target_os = "macos")]
 mod panel;
