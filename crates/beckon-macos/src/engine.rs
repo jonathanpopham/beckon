@@ -30,7 +30,7 @@
 //! 7 ms warm, well under the 50 ms budget for a show.
 
 use crate::ffi::{self, msg, Bool, Id};
-use crate::{apps, panel, pasteboard, system, ui, winmgmt};
+use crate::{apps, files, onboarding, panel, paste, pasteboard, switcher, system, ui, winmgmt};
 use beckon_core::calc;
 use beckon_core::frecency::FrecencyStore;
 use beckon_core::persist;
@@ -57,9 +57,14 @@ enum Entry {
     /// Run a command source action ("system.*" via system::activate,
     /// "window.*" via winmgmt::activate), then record a use of `id`.
     Command { id: String },
-    /// Copy a clipboard history entry back to the pasteboard
-    /// (pasteboard::activate bumps its own recency; no frecency record).
+    /// Copy a clipboard history entry back to the pasteboard, then paste
+    /// it into the frontmost app (pasteboard::activate bumps its own
+    /// recency; no frecency record).
     Clip { id: String },
+    /// Focus another app's window via the switcher.
+    Window { id: String },
+    /// Open a file search hit.
+    File { id: String },
 }
 
 struct Engine {
@@ -156,6 +161,11 @@ pub fn init() {
 
     let mut commands = system::items();
     commands.extend(winmgmt::items());
+    // Present only while Accessibility is not granted; self-retires on
+    // the next launch after the grant. The status line makes the current
+    // world visible in the startup log either way.
+    commands.extend(onboarding::items());
+    println!("beckon: {}", onboarding::status_line());
 
     if ENGINE
         .set(Mutex::new(Engine {
@@ -175,6 +185,9 @@ pub fn init() {
     // Main thread, before the run loop starts: the watcher's poll timer
     // lands on the main run loop, and its store under the same root.
     pasteboard::start();
+    // The file index builds on a background thread; items() serves
+    // partial snapshots until the walk lands.
+    files::start();
 }
 
 /// Hotkey entry: refresh the app index (measured cheap; module docs),
@@ -184,6 +197,9 @@ pub fn init() {
 pub fn summon() {
     let fresh = apps::index();
     engine().lock().unwrap().apps = fresh;
+    // Kick a background re-walk so file results track the disk; the call
+    // coalesces if a walk is already running.
+    files::refresh();
     panel::set_query("");
     handle_query("");
     panel::show();
@@ -204,16 +220,18 @@ impl Engine {
     /// entry per row.
     fn refresh_results(&mut self, raw: &str) -> Vec<ui::RowData> {
         let now = now_secs();
-        // Clipboard history rides a keyword trigger, not the fuzzy pool:
-        // history entries are arbitrary text and would pollute app
-        // ranking. "clip" or "clipboard" as the first word, with the rest
-        // of the query searching the history.
+        // Keyword-triggered sources ride outside the fuzzy pool: their
+        // rows are arbitrary text (clipboard history, window titles,
+        // file paths) and would pollute app ranking. First word chooses
+        // the source, the rest of the query searches inside it.
         let trimmed = raw.trim();
         if let Some(first) = trimmed.split_whitespace().next() {
-            let lower = first.to_lowercase();
-            if lower == "clip" || lower == "clipboard" {
-                let rest = trimmed[first.len()..].trim();
-                return self.clip_rows(rest);
+            let rest = trimmed[first.len()..].trim();
+            match first.to_lowercase().as_str() {
+                "clip" | "clipboard" => return self.clip_rows(rest),
+                "win" | "windows" => return self.window_rows(rest),
+                "file" | "find" => return self.file_rows(rest),
+                _ => {}
             }
         }
         match QueryIntent::parse(raw) {
@@ -273,6 +291,41 @@ impl Engine {
     /// shaping and the cap.
     fn clip_rows(&mut self, query: &str) -> Vec<ui::RowData> {
         let items = pasteboard::items(query);
+        self.trigger_rows(items, |id| Entry::Clip { id })
+    }
+
+    /// Rows for the window switcher trigger: every layer-0 window,
+    /// frontmost app first; the rest of the query filters.
+    fn window_rows(&mut self, query: &str) -> Vec<ui::RowData> {
+        let items = switcher::items(query);
+        self.trigger_rows(items, |id| Entry::Window { id })
+    }
+
+    /// Rows for the file search trigger: local index ranked by the core
+    /// fuzzy scorer, Spotlight topping up thin results. Empty search
+    /// shows nothing by design (a file list without a query is noise).
+    fn file_rows(&mut self, query: &str) -> Vec<ui::RowData> {
+        let items = files::items(query);
+        let mut rows = self.trigger_rows(items, |id| Entry::File { id });
+        // A miss against a still-building index gets an explanation
+        // instead of silence. The hint row has no activation entry;
+        // handle_activate treats the missing entry as a no-op.
+        if rows.is_empty() && !query.is_empty() && !files::ready() {
+            rows.push(ui::RowData {
+                title: "Indexing files...".to_string(),
+                subtitle: "results appear as the walk finishes".to_string(),
+            });
+        }
+        rows
+    }
+
+    /// Shared shaping for keyword-triggered sources: one row and one
+    /// activation entry per item, in the source's own order.
+    fn trigger_rows(
+        &mut self,
+        items: Vec<Item>,
+        entry: impl Fn(String) -> Entry,
+    ) -> Vec<ui::RowData> {
         self.results.clear();
         let mut rows = Vec::new();
         for item in items {
@@ -280,7 +333,7 @@ impl Engine {
                 title: item.title,
                 subtitle: item.subtitle,
             });
-            self.results.push(Entry::Clip { id: item.id });
+            self.results.push(entry(item.id));
         }
         rows
     }
@@ -315,6 +368,8 @@ fn handle_activate(index: usize) {
         Entry::Command { id } => {
             let result = if id.starts_with("window.") {
                 winmgmt::activate(&id)
+            } else if id.starts_with("onboarding.") {
+                onboarding::activate(&id)
             } else {
                 system::activate(&id)
             };
@@ -334,8 +389,26 @@ fn handle_activate(index: usize) {
             }
         }
         Entry::Clip { id } => match pasteboard::activate(&id) {
-            Ok(()) => dismiss(),
+            Ok(()) => {
+                // The entry is on the pasteboard; hide first (the panel
+                // is non-activating, so the target app already holds key
+                // focus), then synthesize Cmd+V. Without the
+                // Accessibility grant the paste refuses cleanly and the
+                // text stays on the clipboard for a manual paste.
+                dismiss();
+                if let Err(e) = paste::paste_to_frontmost() {
+                    eprintln!("beckon: paste skipped: {e}");
+                }
+            }
             Err(e) => eprintln!("beckon: clipboard copy failed: {e}"),
+        },
+        Entry::Window { id } => match switcher::activate(&id) {
+            Ok(()) => dismiss(),
+            Err(e) => eprintln!("beckon: window focus failed: {e}"),
+        },
+        Entry::File { id } => match files::activate(&id) {
+            Ok(()) => dismiss(),
+            Err(e) => eprintln!("beckon: open failed: {e}"),
         },
     }
 }

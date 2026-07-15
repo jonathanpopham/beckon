@@ -57,11 +57,6 @@
 //! 3. Threading: CGEventPost is not main-thread bound, but callers here
 //!    run on the main thread like the rest of the shell.
 
-// Wired into the engine by the integrator; until that lands nothing in
-// main calls this module, so the dead-code lint is silenced file-wide.
-// Remove the allow with the first caller.
-#![allow(dead_code)]
-
 use crate::ax::{self, CFTypeRef, CfGuard};
 
 /// CGEventRef from CGEventTypes.h: an opaque CF object pointer.

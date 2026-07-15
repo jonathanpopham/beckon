@@ -295,13 +295,22 @@ mod shell {
         type_query("window left half");
         let cmd_top = ui::row_at(0).unwrap_or_default();
         let commands_ok = cmd_top.title == "Window: Left Half";
-        let ok =
-            rows > 0 && top.title.contains("Safari") && down_handled && selection_ok && commands_ok;
+        // The window switcher trigger: this process has live windows on
+        // screen around it, so "win" must list some.
+        type_query("win");
+        let win_rows = ui::row_count();
+        let switcher_ok = win_rows > 0;
+        let ok = rows > 0
+            && top.title.contains("Safari")
+            && down_handled
+            && selection_ok
+            && commands_ok
+            && switcher_ok;
         SMOKE_SEARCHED.store(ok, Ordering::Relaxed);
         println!(
             "smoke: search rows={rows} top_title={:?} top_subtitle={:?} \
              moveDown handled={down_handled} selection={selected:?} \
-             command_top={:?}",
+             command_top={:?} switcher_rows={win_rows}",
             top.title, top.subtitle, cmd_top.title
         );
         // Safety: as in did_finish_launching.

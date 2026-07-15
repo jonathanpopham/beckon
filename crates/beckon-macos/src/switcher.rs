@@ -55,11 +55,6 @@
 //! case-insensitive substring match on title or app name), and
 //! [`activate`] focuses one row by id ("winsw.<pid>.<windowNumber>").
 
-// Wired into the engine by the integrator; until that lands nothing in
-// main calls this module, so the dead-code lint is silenced file-wide.
-// Remove the allow with the first caller.
-#![allow(dead_code)]
-
 use crate::ax::{self, AXError, Boolean, CFIndex, CFStringRef, CFTypeRef, CfGuard};
 use crate::ffi::{self, msg, Bool, Id};
 use beckon_core::router::{Item, ItemKind};

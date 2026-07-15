@@ -34,11 +34,6 @@
 //! activate's argv is locked by golden tests without spawning anything
 //! (tests never pop System Settings on the machine running the gate).
 
-// Wired into the engine by the integrator; until that lands nothing in
-// main calls this module, so the dead-code lint is silenced file-wide.
-// Remove the allow with the first caller.
-#![allow(dead_code)]
-
 use crate::ax;
 use beckon_core::router::{Item, ItemKind};
 

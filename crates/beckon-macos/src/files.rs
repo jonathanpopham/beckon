@@ -42,9 +42,6 @@
 //! NSWorkspace openURL: (the supported, synchronous-BOOL API, so failure
 //! is observable), falling back to /usr/bin/open if AppKit declines.
 //!
-//! This module is not yet wired into the engine; the integrator removes
-//! the file-wide dead_code allow below when hooking it up.
-#![allow(dead_code)]
 
 use crate::ffi::{self, msg, Bool, Id};
 use beckon_core::fuzzy;
