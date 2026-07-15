@@ -7,11 +7,15 @@
 //!
 //! Flags: `--version` prints and exits; `--smoke` runs the automated shell
 //! self-test (show the panel, round-trip an NSString, hide, exit 0) with
-//! no user input, proving the FFI end to end.
+//! no user input, proving the FFI end to end; `--index-apps` (macOS only)
+//! prints one "title<TAB>id<TAB>path" line per indexed application and
+//! exits.
 //!
 //! On non-macOS targets this builds as a stub so the whole workspace
 //! compiles and tests on Linux CI.
 
+#[cfg(target_os = "macos")]
+mod apps;
 #[cfg(target_os = "macos")]
 mod ffi;
 #[cfg(target_os = "macos")]
@@ -23,6 +27,13 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == "--version" || a == "-V") {
         println!("beckon {}", beckon_core::VERSION);
+        return;
+    }
+    #[cfg(target_os = "macos")]
+    if args.iter().any(|a| a == "--index-apps") {
+        for item in apps::index() {
+            println!("{}\t{}\t{}", item.title, item.id, item.subtitle);
+        }
         return;
     }
     let smoke = args.iter().any(|a| a == "--smoke");
