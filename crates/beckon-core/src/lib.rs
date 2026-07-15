@@ -17,6 +17,10 @@
 //!   quicklinks parameterized links
 //!   persist    canonical JSON codec and atomic file store
 
+pub mod calc;
+pub mod clipstore;
+pub mod persist;
+
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[cfg(test)]
