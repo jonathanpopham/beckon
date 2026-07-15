@@ -55,10 +55,6 @@
 //! surfacing the denial text as the Err the launcher can show.
 
 // Nothing here has a caller yet: the integrator wires items() and
-// activate() into the engine after the parallel wave merges. This
-// attribute keeps the deny-warnings gate green until that hookup lands;
-// remove it with the wiring.
-#![allow(dead_code)]
 
 use beckon_core::router::{Item, ItemKind};
 use std::ffi::CString;

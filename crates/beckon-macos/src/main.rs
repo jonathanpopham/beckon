@@ -282,12 +282,19 @@ mod shell {
         // With a single row, moveDown wraps back to 0; either way the
         // delegate must have swallowed the command.
         let selection_ok = selected == Some(if rows > 1 { 1 } else { 0 });
-        let ok = rows > 0 && top.title.contains("Safari") && down_handled && selection_ok;
+        // The command sources share the ranked pool with apps: a window
+        // action must win its own name.
+        type_query("window left half");
+        let cmd_top = ui::row_at(0).unwrap_or_default();
+        let commands_ok = cmd_top.title == "Window: Left Half";
+        let ok =
+            rows > 0 && top.title.contains("Safari") && down_handled && selection_ok && commands_ok;
         SMOKE_SEARCHED.store(ok, Ordering::Relaxed);
         println!(
             "smoke: search rows={rows} top_title={:?} top_subtitle={:?} \
-             moveDown handled={down_handled} selection={selected:?}",
-            top.title, top.subtitle
+             moveDown handled={down_handled} selection={selected:?} \
+             command_top={:?}",
+            top.title, top.subtitle, cmd_top.title
         );
         // Safety: as in did_finish_launching.
         unsafe { perform_after(this, "beckonSmokeCalc:", 0.2) };

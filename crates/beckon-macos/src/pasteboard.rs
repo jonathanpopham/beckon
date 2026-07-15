@@ -34,9 +34,6 @@
 //! cross-thread use, and is never held across an FFI call.
 
 // The integrator wires start/items/activate/note_own_write into the
-// engine after merge; until then this module has no in-crate callers.
-// Remove this allow in the wiring commit.
-#![allow(dead_code)]
 
 use crate::ffi::{self, msg, Bool, Id, Sel};
 use beckon_core::clipstore::{ClipEntry, ClipStore};

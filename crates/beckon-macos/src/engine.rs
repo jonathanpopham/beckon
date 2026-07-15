@@ -30,7 +30,7 @@
 //! 7 ms warm, well under the 50 ms budget for a show.
 
 use crate::ffi::{self, msg, Bool, Id};
-use crate::{apps, panel, ui};
+use crate::{apps, panel, pasteboard, system, ui, winmgmt};
 use beckon_core::calc;
 use beckon_core::frecency::FrecencyStore;
 use beckon_core::persist;
@@ -54,11 +54,20 @@ enum Entry {
     App { id: String, path: String },
     /// Copy the calculator result to the clipboard.
     Calc { display: String },
+    /// Run a command source action ("system.*" via system::activate,
+    /// "window.*" via winmgmt::activate), then record a use of `id`.
+    Command { id: String },
+    /// Copy a clipboard history entry back to the pasteboard
+    /// (pasteboard::activate bumps its own recency; no frecency record).
+    Clip { id: String },
 }
 
 struct Engine {
     /// App index snapshot; refreshed on every summon.
     apps: Vec<Item>,
+    /// Static command pool (system commands plus window actions),
+    /// computed once at init; both sources are deterministic.
+    commands: Vec<Item>,
     frecency: FrecencyStore,
     frecency_path: PathBuf,
     /// Activation targets for the rows currently in the table.
@@ -145,9 +154,13 @@ pub fn init() {
     // edge so the file stays small. Scores are unchanged (they were 0).
     frecency.prune(now_secs());
 
+    let mut commands = system::items();
+    commands.extend(winmgmt::items());
+
     if ENGINE
         .set(Mutex::new(Engine {
             apps,
+            commands,
             frecency,
             frecency_path,
             results: Vec::new(),
@@ -159,6 +172,9 @@ pub fn init() {
 
     ui::set_on_query_changed(|q| handle_query(&q));
     ui::set_on_activate(handle_activate);
+    // Main thread, before the run loop starts: the watcher's poll timer
+    // lands on the main run loop, and its store under the same root.
+    pasteboard::start();
 }
 
 /// Hotkey entry: refresh the app index (measured cheap; module docs),
@@ -188,6 +204,18 @@ impl Engine {
     /// entry per row.
     fn refresh_results(&mut self, raw: &str) -> Vec<ui::RowData> {
         let now = now_secs();
+        // Clipboard history rides a keyword trigger, not the fuzzy pool:
+        // history entries are arbitrary text and would pollute app
+        // ranking. "clip" or "clipboard" as the first word, with the rest
+        // of the query searching the history.
+        let trimmed = raw.trim();
+        if let Some(first) = trimmed.split_whitespace().next() {
+            let lower = first.to_lowercase();
+            if lower == "clip" || lower == "clipboard" {
+                let rest = trimmed[first.len()..].trim();
+                return self.clip_rows(rest);
+            }
+        }
         match QueryIntent::parse(raw) {
             // Empty query: a pure frecency list (recent habits first,
             // then alphabetical), so a fresh install shows the
@@ -213,21 +241,46 @@ impl Engine {
         }
     }
 
-    /// Rank the app snapshot against `query` and keep the top rows.
+    /// Rank apps and commands together against `query` and keep the top
+    /// rows. The pool is rebuilt per keystroke; at ~130 items the clone
+    /// cost is noise next to the AppKit reload that follows.
     fn search_rows(&mut self, query: &str, now: u64) -> Vec<ui::RowData> {
-        let ranked = router::rank(query, &self.apps, &self.frecency, now);
+        let mut pool = self.apps.clone();
+        pool.extend(self.commands.iter().cloned());
+        let ranked = router::rank(query, &pool, &self.frecency, now);
         self.results.clear();
         let mut rows = Vec::new();
         for r in ranked.into_iter().take(MAX_RESULTS) {
             rows.push(ui::RowData {
                 title: r.item.title,
-                // The item subtitle is the absolute bundle path.
+                // App subtitles are absolute bundle paths; command
+                // subtitles are one-line descriptions.
                 subtitle: r.item.subtitle.clone(),
             });
-            self.results.push(Entry::App {
-                id: r.item.id,
-                path: r.item.subtitle,
+            self.results.push(match r.item.kind {
+                router::ItemKind::App => Entry::App {
+                    id: r.item.id,
+                    path: r.item.subtitle,
+                },
+                _ => Entry::Command { id: r.item.id },
             });
+        }
+        rows
+    }
+
+    /// Rows for the clipboard history trigger: recent entries for an
+    /// empty search, ClipStore search otherwise; pasteboard::items owns
+    /// shaping and the cap.
+    fn clip_rows(&mut self, query: &str) -> Vec<ui::RowData> {
+        let items = pasteboard::items(query);
+        self.results.clear();
+        let mut rows = Vec::new();
+        for item in items {
+            rows.push(ui::RowData {
+                title: item.title,
+                subtitle: item.subtitle,
+            });
+            self.results.push(Entry::Clip { id: item.id });
         }
         rows
     }
@@ -252,11 +305,38 @@ fn handle_activate(index: usize) {
         },
         Entry::Calc { display } => {
             if copy_to_clipboard(&display) {
+                // Our own write; the history watcher must not capture it.
+                pasteboard::note_own_write();
                 dismiss();
             } else {
                 eprintln!("beckon: pasteboard write failed");
             }
         }
+        Entry::Command { id } => {
+            let result = if id.starts_with("window.") {
+                winmgmt::activate(&id)
+            } else {
+                system::activate(&id)
+            };
+            match result {
+                Ok(()) => {
+                    record_use_and_save(&id);
+                    dismiss();
+                }
+                Err(e) => {
+                    eprintln!("beckon: command {id} failed: {e}");
+                    // Window actions need the Accessibility grant; offer
+                    // the system prompt once the need is proven.
+                    if id.starts_with("window.") && !winmgmt::is_trusted() {
+                        winmgmt::prompt_for_trust();
+                    }
+                }
+            }
+        }
+        Entry::Clip { id } => match pasteboard::activate(&id) {
+            Ok(()) => dismiss(),
+            Err(e) => eprintln!("beckon: clipboard copy failed: {e}"),
+        },
     }
 }
 
