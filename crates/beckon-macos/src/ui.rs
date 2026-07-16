@@ -25,14 +25,16 @@
 //! fine (they use separate locks or none).
 
 use crate::ffi::{self, msg, Bool, Id, ObjcObject, Sel, NIL, NO, YES};
-use crate::panel;
+use crate::{panel, theme};
 use std::mem::transmute;
 use std::ptr;
 use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::{Mutex, Once, OnceLock};
 
-/// One row of the results list. The title renders white; the subtitle is
-/// appended after two spaces and rendered dimmed.
+/// One row of the results list. The title renders in the theme's
+/// foreground color (accent when the row is selected); the subtitle is
+/// appended after two spaces and rendered dimmed. Without an applied
+/// theme (theme::row_style() is None) rows keep the built-in white.
 #[derive(Clone, Debug, Default)]
 pub struct RowData {
     pub title: String,
@@ -85,36 +87,53 @@ extern "C" fn number_of_rows(_this: Id, _sel: Sel, _table: Id) -> isize {
     items().lock().unwrap().len() as isize
 }
 
-extern "C" fn object_value(_this: Id, _sel: Sel, _table: Id, _column: Id, row: isize) -> Id {
+extern "C" fn object_value(_this: Id, _sel: Sel, table: Id, _column: Id, row: isize) -> Id {
     let guard = items().lock().unwrap();
     let Some(data) = usize::try_from(row).ok().and_then(|i| guard.get(i)) else {
         return NIL;
     };
+    // Cell-based tables redraw the affected rows on every selection
+    // change and drawing re-asks the data source, so tinting the
+    // selected row's title here tracks the selection exactly.
     // Safety: main thread (the table only asks for values from the run
-    // loop or from set_items/reloadData, both main thread); signatures in
-    // row_value match AppKit.
-    unsafe { row_value(data) }
+    // loop or from set_items/reloadData, both main thread); selectedRow
+    // returns NSInteger; signatures in row_value match AppKit.
+    unsafe {
+        let selected = !table.is_null() && msg!(isize: table, ffi::sel("selectedRow")) == row;
+        row_value(data, selected)
+    }
 }
 
-/// Build an autoreleased attributed string for one row: white title, then
-/// the subtitle after two spaces in a dimmed gray. The attribute keys are
-/// the documented literal values of NSForegroundColorAttributeName and
+/// Build an autoreleased attributed string for one row: the title in the
+/// theme foreground (accent when selected, the wiring theme.rs documents
+/// for the selection highlight), then the subtitle after two spaces in a
+/// dimmed variant of the foreground. Row fonts scale with the theme's
+/// font_size relative to the default 22pt, so the default theme keeps
+/// the built-in 15pt/13pt look. The attribute keys are the documented
+/// literal values of NSForegroundColorAttributeName and
 /// NSFontAttributeName ("NSColor" and "NSFont"), spelled out because we
 /// link no headers to import the constants from.
 ///
 /// # Safety
 /// Main thread; every msg! spells the documented AppKit signature.
-unsafe fn row_value(data: &RowData) -> Id {
-    let title_font = msg!(Id: ffi::class("NSFont"), ffi::sel("systemFontOfSize:"), f64: 15.0);
-    let white = msg!(Id: ffi::class("NSColor"), ffi::sel("whiteColor"));
+unsafe fn row_value(data: &RowData, selected: bool) -> Id {
+    // Before theme::apply runs (tests, headless), keep the built-in
+    // white-on-dark look.
+    let (fg, accent, scale) = match theme::row_style() {
+        Some(s) => (s.foreground, s.accent, f64::from(s.font_size) / 22.0),
+        None => ((255, 255, 255), (255, 255, 255), 1.0),
+    };
+    let title_font = msg!(Id: ffi::class("NSFont"), ffi::sel("systemFontOfSize:"),
+        f64: 15.0 * scale);
+    let title_color = rgb_color(if selected { accent } else { fg }, 1.0);
     let value = msg!(Id: msg!(Id: ffi::class("NSMutableAttributedString"), ffi::sel("alloc")),
         ffi::sel("initWithString:attributes:"),
         Id: ffi::nsstring(&data.title),
-        Id: attributes(white, title_font));
+        Id: attributes(title_color, title_font));
     if !data.subtitle.is_empty() {
-        let sub_font = msg!(Id: ffi::class("NSFont"), ffi::sel("systemFontOfSize:"), f64: 13.0);
-        let dim = msg!(Id: ffi::class("NSColor"),
-            ffi::sel("colorWithCalibratedWhite:alpha:"), f64: 1.0, f64: 0.45);
+        let sub_font = msg!(Id: ffi::class("NSFont"), ffi::sel("systemFontOfSize:"),
+            f64: 13.0 * scale);
+        let dim = rgb_color(fg, 0.45);
         let sub = msg!(Id: msg!(Id: ffi::class("NSAttributedString"), ffi::sel("alloc")),
             ffi::sel("initWithString:attributes:"),
             Id: ffi::nsstring(&format!("  {}", data.subtitle)),
@@ -126,6 +145,20 @@ unsafe fn row_value(data: &RowData) -> Id {
     // Autorelease: this is called on every redraw, so leaking here would
     // grow without bound. The run loop's pool drains it.
     msg!(Id: value, ffi::sel("autorelease"))
+}
+
+/// Autoreleased NSColor from theme channels (0..=255) plus an alpha.
+///
+/// # Safety
+/// Main thread; colorWithCalibratedRed:green:blue:alpha: takes four
+/// CGFloats and returns an autoreleased NSColor.
+unsafe fn rgb_color(rgb: (u8, u8, u8), alpha: f64) -> Id {
+    msg!(Id: ffi::class("NSColor"),
+        ffi::sel("colorWithCalibratedRed:green:blue:alpha:"),
+        f64: f64::from(rgb.0) / 255.0,
+        f64: f64::from(rgb.1) / 255.0,
+        f64: f64::from(rgb.2) / 255.0,
+        f64: alpha)
 }
 
 /// Autoreleased attribute dictionary {NSColor: color, NSFont: font}.

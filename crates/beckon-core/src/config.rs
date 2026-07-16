@@ -35,8 +35,10 @@
 //!   - `max_results`: rows shown per query, clamped to 1..=100. Default 9.
 //!   - `triggers`: keyword renames for the built-in sources. Entries are
 //!     merged over the identity defaults (`clip`, `win`, `file`, `menu`,
-//!     `emoji`, `snip`, `go`), so `"v": "clip"` adds a synonym without
-//!     losing `clip` itself. Targets must name one of those seven sources.
+//!     `emoji`, `snip`, `go`) plus the built-in synonyms ([`TRIGGER_SYNONYMS`]:
+//!     `clipboard`, `windows`, `find`, `snippet`), so `"v": "clip"` adds a
+//!     synonym without losing `clip` itself. Targets must name one of the
+//!     seven sources.
 //!
 //! There is no schema version field: the document is user-authored, every
 //! key is optional, and unknown keys are ignored for forward compatibility.
@@ -54,6 +56,17 @@ pub const CONFIG_FILE: &str = "config.json";
 /// The seven built-in keyword-triggered sources a `triggers` entry may
 /// point at.
 pub const TRIGGER_SOURCES: [&str; 7] = ["clip", "emoji", "file", "go", "menu", "snip", "win"];
+
+/// Built-in synonym keywords merged into the default trigger table next
+/// to the identity entries, so the long spellings keep working without
+/// any engine-side special cases. Users may repoint them like any other
+/// trigger keyword.
+pub const TRIGGER_SYNONYMS: [(&str, &str); 4] = [
+    ("clipboard", "clip"),
+    ("find", "file"),
+    ("snippet", "snip"),
+    ("windows", "win"),
+];
 
 /// Modifier names the `hotkey.modifiers` list accepts.
 pub const MODIFIER_NAMES: [&str; 4] = ["cmd", "opt", "ctrl", "shift"];
@@ -104,7 +117,8 @@ pub struct Config {
     /// Rows shown per query.
     pub max_results: usize,
     /// Trigger keyword -> built-in source name. Always contains at least
-    /// the identity defaults for the seven sources.
+    /// the identity defaults for the seven sources plus the
+    /// [`TRIGGER_SYNONYMS`].
     pub triggers: BTreeMap<String, String>,
 }
 
@@ -126,6 +140,11 @@ impl Default for Config {
             triggers: TRIGGER_SOURCES
                 .iter()
                 .map(|s| (s.to_string(), s.to_string()))
+                .chain(
+                    TRIGGER_SYNONYMS
+                        .iter()
+                        .map(|(k, v)| (k.to_string(), v.to_string())),
+                )
                 .collect(),
         }
     }
@@ -543,9 +562,15 @@ mod tests {
         assert_eq!(c.theme.accent, "#5AC8FA");
         assert_eq!(c.theme.font_size, 22);
         assert_eq!(c.max_results, 9);
-        assert_eq!(c.triggers.len(), TRIGGER_SOURCES.len());
+        assert_eq!(
+            c.triggers.len(),
+            TRIGGER_SOURCES.len() + TRIGGER_SYNONYMS.len()
+        );
         for s in TRIGGER_SOURCES {
             assert_eq!(c.triggers.get(s).map(String::as_str), Some(s));
+        }
+        for (k, v) in TRIGGER_SYNONYMS {
+            assert_eq!(c.triggers.get(k).map(String::as_str), Some(v));
         }
     }
 
@@ -566,8 +591,10 @@ mod tests {
              \"max_results\":9,\
              \"theme\":{\"accent\":\"#5AC8FA\",\"background\":\"#1C1C21\",\
              \"font_size\":22,\"foreground\":\"#FFFFFF\"},\
-             \"triggers\":{\"clip\":\"clip\",\"emoji\":\"emoji\",\"file\":\"file\",\
-             \"go\":\"go\",\"menu\":\"menu\",\"snip\":\"snip\",\"win\":\"win\"}}"
+             \"triggers\":{\"clip\":\"clip\",\"clipboard\":\"clip\",\"emoji\":\"emoji\",\
+             \"file\":\"file\",\"find\":\"file\",\"go\":\"go\",\"menu\":\"menu\",\
+             \"snip\":\"snip\",\"snippet\":\"snip\",\"win\":\"win\",\
+             \"windows\":\"win\"}}"
         );
     }
 
@@ -622,7 +649,10 @@ mod tests {
         // Renames merge over the identity defaults.
         assert_eq!(c.triggers.get("v").map(String::as_str), Some("clip"));
         assert_eq!(c.triggers.get("clip").map(String::as_str), Some("clip"));
-        assert_eq!(c.triggers.len(), TRIGGER_SOURCES.len() + 2);
+        assert_eq!(
+            c.triggers.len(),
+            TRIGGER_SOURCES.len() + TRIGGER_SYNONYMS.len() + 2
+        );
     }
 
     #[test]

@@ -237,7 +237,6 @@ pub fn field() -> Id {
 /// before init (it returns without touching anything) and idempotent;
 /// call on the main thread like every other panel function. Row text
 /// colors live in ui.rs and are themed separately (see theme.rs).
-#[allow(dead_code)] // called by theme::apply, which the integrator wires
 pub fn set_colors(background: (u8, u8, u8), foreground: (u8, u8, u8), font_size: u32) {
     let panel = PANEL.load(Ordering::Relaxed);
     let field = FIELD.load(Ordering::Relaxed);
