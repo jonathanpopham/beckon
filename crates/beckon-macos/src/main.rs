@@ -42,6 +42,8 @@ mod paste;
 #[cfg(target_os = "macos")]
 mod pasteboard;
 #[cfg(target_os = "macos")]
+mod pathnav;
+#[cfg(target_os = "macos")]
 mod plugins;
 #[cfg(target_os = "macos")]
 mod scriptcmd;
@@ -393,11 +395,26 @@ mod shell {
                 accent: (0x5A, 0xC8, 0xFA),
                 font_size: 22,
             });
-        let ok = script_ok && theme_ok;
+        // The path browser: an exact .app path leads with Launch, a home
+        // browse leads with the Finder action plus children, and a dead
+        // path says so.
+        type_query("/Applications/Safari.app");
+        let app_top = ui::row_at(0).unwrap_or_default().title;
+        type_query("~/");
+        let browse_top = ui::row_at(0).unwrap_or_default().title;
+        let browse_rows = ui::row_count();
+        type_query("~/zzz-beckon-no-such-dir/x");
+        let dead_top = ui::row_at(0).unwrap_or_default().title;
+        let path_ok = app_top.contains("Launch Safari.app")
+            && browse_top.contains("in Finder")
+            && browse_rows > 3
+            && dead_top == "No such path";
+        let ok = script_ok && theme_ok && path_ok;
         SMOKE_SCRIPTED.store(ok, Ordering::Relaxed);
         println!(
             "smoke: script rows={rows} hello_row_found={script_ok} \
-             theme_row_style={style:?} theme_default_ok={theme_ok}"
+             theme_row_style={style:?} theme_default_ok={theme_ok} \
+             path_app={app_top:?} path_browse_rows={browse_rows} path_ok={path_ok}"
         );
         // Safety: as in did_finish_launching.
         unsafe { perform_after(this, "beckonSmokeCalc:", 0.2) };

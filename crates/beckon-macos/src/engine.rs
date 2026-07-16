@@ -33,8 +33,8 @@
 
 use crate::ffi::{self, msg, Bool, Id};
 use crate::{
-    apps, files, hotkey, menubar, onboarding, panel, paste, pasteboard, plugins, scriptcmd,
-    switcher, system, theme, ui, winmgmt,
+    apps, files, hotkey, menubar, onboarding, panel, paste, pasteboard, pathnav, plugins,
+    scriptcmd, switcher, system, theme, ui, winmgmt,
 };
 use beckon_core::config::{self, Config};
 use beckon_core::frecency::FrecencyStore;
@@ -88,6 +88,8 @@ enum Entry {
     /// Ask a plugin what to do; its action maps onto the existing copy,
     /// paste, and open paths.
     Plugin { id: String },
+    /// A path-browser row: open, reveal, preview, copy, or drill deeper.
+    Path(pathnav::PathAction),
 }
 
 struct Engine {
@@ -458,6 +460,21 @@ impl Engine {
     fn refresh_results(&mut self, raw: &str) -> Vec<ui::RowData> {
         let now = now_secs();
         let trimmed = raw.trim();
+        // Path-shaped queries ("~/...", "/...", "./", "file://") become a
+        // keyboard file browser before anything else looks at them; no
+        // alias or trigger keyword can start with those characters.
+        if let Some(prows) = pathnav::rows(trimmed, self.config.max_results) {
+            self.results.clear();
+            let mut rows = Vec::new();
+            for r in prows {
+                rows.push(ui::RowData {
+                    title: r.title,
+                    subtitle: r.subtitle,
+                });
+                self.results.push(Entry::Path(r.action));
+            }
+            return rows;
+        }
         match alias_outcome(&self.config.aliases, &self.script_keywords, trimmed) {
             AliasOutcome::Item(id) => {
                 if let Some(rows) = self.alias_item_rows(&id) {
@@ -867,6 +884,45 @@ fn handle_activate(index: usize) {
             }
             // Failure keeps the panel up so the error context survives.
             Err(e) => eprintln!("beckon: script {id} failed: {e}"),
+        },
+        Entry::Path(action) => match action {
+            pathnav::PathAction::Open(path) => {
+                if pathnav::open(&path) {
+                    dismiss();
+                } else {
+                    eprintln!("beckon: could not open {path}");
+                }
+            }
+            pathnav::PathAction::Reveal(path) => {
+                if pathnav::reveal(&path) {
+                    dismiss();
+                } else {
+                    eprintln!("beckon: could not reveal {path}");
+                }
+            }
+            pathnav::PathAction::QuickLook(path) => {
+                // Hide first so the preview window is not behind the
+                // panel; the query survives for the next summon? No:
+                // dismiss clears it, which matches Open behavior.
+                dismiss();
+                pathnav::quick_look(&path);
+            }
+            pathnav::PathAction::CopyPath(path) => {
+                if copy_to_clipboard(&path) {
+                    pasteboard::note_own_write();
+                    dismiss();
+                } else {
+                    eprintln!("beckon: pasteboard write failed");
+                }
+            }
+            pathnav::PathAction::Drill(path) => {
+                // Keep browsing: rewrite the query and re-run the
+                // pipeline; the panel stays up and selection resets.
+                let q = pathnav::drill_query(&path);
+                panel::set_query(&q);
+                handle_query(&q);
+            }
+            pathnav::PathAction::None => {}
         },
         Entry::Plugin { id } => match plugins::activate(&id) {
             Ok(plugins::PluginAction::None) => dismiss(),

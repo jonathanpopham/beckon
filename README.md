@@ -24,6 +24,10 @@ no JS runtime, no wrapper crates, no build.rs.
   pastes it into the app you came from. Password manager secrets are
   never captured (concealed pasteboard types respected)
 - **File search**: `file report` ranks a local index, Spotlight backfills
+- **Path browser**: paste any path (`~/geist/thing`, `/Applications/...`,
+  even quoted, shell-escaped, or `file://` forms) and get Open, Reveal in
+  Finder, Quick Look, and Copy Path; partial paths complete as you type
+  and Return drills into folders, so `~/ge` walks the tree without Finder
 - **Calculator inline**: type `0.1 + 0.2` and get exactly `0.3`
   (fixed-point, no float drift); units (`5 km in mi`), bases
   (`255 in hex`), percent (`200 * 15%`)
