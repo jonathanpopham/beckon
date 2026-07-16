@@ -1,49 +1,99 @@
 # beckon
 
-A keyboard launcher for macOS. Press a key, a panel appears, you type,
-things happen. Free, MIT licensed, no account, no subscription, no
+A keyboard launcher for macOS. Press Option+Space, a panel appears, you
+type, things happen. Free, MIT licensed, no account, no subscription, no
 telemetry, and zero network calls in the shipped build.
 
 **Zero dependencies.** Two Rust crates, std only. The engine
 (`beckon-core`) is a pure deterministic library: fuzzy matching, frecency
-ranking, a fixed-point calculator, clipboard and snippet stores, all golden
-tested on Linux CI. The macOS shell talks to AppKit and the Accessibility
-APIs through hand-rolled Objective-C runtime FFI. No webview, no JS
-runtime, no wrapper crates.
+ranking, a fixed-point calculator, snippet expansion, all golden tested on
+Linux CI. The macOS shell talks to AppKit, Carbon, CoreGraphics, and the
+Accessibility APIs through hand-rolled Objective-C and C FFI. No webview,
+no JS runtime, no wrapper crates, no build.rs.
 
-## Status
+## What it does
 
-Early. See [docs/PLAN.md](docs/PLAN.md) for the full feature matrix,
-architecture, and milestones. The short version:
+- **Launch and switch apps** with fuzzy search that learns your habits
+  (integer frecency, 14 day half-life; a strong match always wins)
+- **Window management**: halves, thirds, quarters, maximize, center, move
+  between displays ("window left half", or alias it to "lh")
+- **Window switcher**: `win` lists every window of every app
+- **Menu item search**: `menu export` finds "File > Export as PDF" in the
+  frontmost app and presses it
+- **Clipboard history**: `clip` searches everything you copied; Return
+  pastes it into the app you came from. Password manager secrets are
+  never captured (concealed pasteboard types respected)
+- **File search**: `file report` ranks a local index, Spotlight backfills
+- **Calculator inline**: type `0.1 + 0.2` and get exactly `0.3`
+  (fixed-point, no float drift); units (`5 km in mi`), bases
+  (`255 in hex`), percent (`200 * 15%`)
+- **Snippets**: `snip` with `{date}`, `{time}`, `{clipboard}`,
+  `{cursor}` placeholders, pasted where you were typing
+- **Quicklinks**: `go google rust launcher` opens the search, properly
+  percent-encoded
+- **Emoji and symbols**: `emoji fire`, plus arrows, math, currency, and
+  mac key glyphs
+- **Dev utilities**: `uuid`, `b64`, `sha256`, `json`, `epoch`, `count`
+- **System commands**: sleep, lock, empty trash, dark mode, volume,
+  quit frontmost, restart Finder
+- **Script commands**: drop an annotated executable in
+  `~/.beckon/scripts/` and it becomes a command
+- **Plugins**: any executable speaking JSON-RPC 2.0 over stdio, in any
+  language; see [docs/PLUGINS.md](docs/PLUGINS.md)
 
-- M1: hotkey summons the panel, fuzzy app launch that learns your habits,
-  inline calculator, system commands
-- M2: clipboard history, window management, window switcher, file search
-- M3: menu item search, snippets, emoji, quicklinks, dev utilities
-- M4: script commands and a JSON-RPC plugin protocol so any executable in
-  any language can extend it
-
-## Build
+## Install
 
 ```sh
-cargo build --release
-./target/release/beckon --version
+git clone https://github.com/jonathanpopham/beckon
+cd beckon
+scripts/bundle.sh
+open dist/Beckon.app
 ```
+
+Press Option+Space. Add `dist/Beckon.app` to System Settings > Login
+Items to start it at login. Window management and paste need one
+Accessibility grant; beckon offers the prompt when a feature first needs
+it and degrades gracefully until then.
+
+## Configure
+
+Everything lives in plain files under `~/.beckon/` (readable, greppable,
+syncable, yours). `config.json` is the source of truth:
+
+```json
+{
+  "aliases":     { "lh": "window.left-half" },
+  "hotkey":      { "key": "space", "modifiers": ["opt"] },
+  "max_results": 9,
+  "theme":       { "background": "#1C1C21", "foreground": "#FFFFFF",
+                   "accent": "#5AC8FA", "font_size": 22 },
+  "triggers":    { "v": "clip" }
+}
+```
+
+Every key is optional. Aliases can point at any command id or rewrite
+into any trigger. Triggers rename the keyword sources (`clip`, `win`,
+`file`, `menu`, `emoji`, `snip`, `go`).
 
 ## Verify
 
-One gate, run anywhere:
+One gate, run anywhere, and CI is a thin wrapper around it:
 
 ```sh
 scripts/verify.sh
 ```
 
-CI is a thin wrapper around that script and nothing else.
+fmt, clippy with denied warnings, the full test suite, a
+zero-dependency audit, and a no-network audit. `beckon --smoke` runs a
+headless end-to-end self-test of the real UI pipeline on macOS.
 
-## Data
+## Design
 
-Everything beckon remembers lives in plain files under `~/.beckon/`:
-readable, greppable, syncable, yours.
+See [docs/PLAN.md](docs/PLAN.md) for the architecture and the positioning
+against sol, Asyar, SuperCmd, and Vicinae. The short version of the bet:
+the launcher you press a hundred times a day should be a deterministic
+program you can read, not a subscription. Same inputs, same ranking, byte
+for byte, forever.
 
 ## License
 
