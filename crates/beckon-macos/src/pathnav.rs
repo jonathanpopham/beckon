@@ -276,8 +276,10 @@ pub fn quick_look(path: &str) {
 mod tests {
     use super::*;
 
-    fn fixture() -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("beckon-pathnav-{}", std::process::id()));
+    fn fixture(tag: &str) -> std::path::PathBuf {
+        // One directory per test: these tests run in parallel threads,
+        // and a shared fixture races remove_dir_all against read_dir.
+        let dir = std::env::temp_dir().join(format!("beckon-pathnav-{}-{tag}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(dir.join("Alpha")).unwrap();
         fs::create_dir_all(dir.join("beta")).unwrap();
@@ -295,7 +297,7 @@ mod tests {
 
     #[test]
     fn existing_file_gets_action_rows() {
-        let dir = fixture();
+        let dir = fixture("file");
         let q = dir.join("apple.txt").to_string_lossy().into_owned();
         let rows = rows(&q, 9).unwrap();
         assert!(rows[0].title.contains("Open apple.txt"));
@@ -309,7 +311,7 @@ mod tests {
 
     #[test]
     fn folder_lists_children_folders_first() {
-        let dir = fixture();
+        let dir = fixture("folder");
         let q = dir.to_string_lossy().into_owned();
         let all = rows(&q, 20).unwrap();
         assert!(all[0].title.contains("in Finder"));
@@ -325,7 +327,7 @@ mod tests {
 
     #[test]
     fn partial_leaf_completes_prefix_before_substring() {
-        let dir = fixture();
+        let dir = fixture("complete");
         let q = dir.join("a").to_string_lossy().into_owned();
         let comp = rows(&q, 9).unwrap();
         // Prefix band: Alpha (dir) then apple.txt; substring band: beta.
@@ -337,7 +339,7 @@ mod tests {
 
     #[test]
     fn dead_path_says_so() {
-        let dir = fixture();
+        let dir = fixture("dead");
         let q = dir.join("zzz-nope/deeper").to_string_lossy().into_owned();
         let hint = rows(&q, 9).unwrap();
         assert_eq!(hint[0].title, "No such path");
