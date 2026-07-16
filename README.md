@@ -50,7 +50,7 @@ no JS runtime, no wrapper crates, no build.rs.
 Homebrew:
 
 ```sh
-brew install --cask jonathanpopham/tap/beckon --no-quarantine
+brew install --cask jonathanpopham/tap/beckon
 ```
 
 Or the install script (downloads the latest release to /Applications):
@@ -72,9 +72,10 @@ Press Option+Space. Add `Beckon.app` to System Settings > Login Items to
 start it at login. Window management and paste need one Accessibility
 grant; beckon offers the prompt when a feature first needs it and
 degrades gracefully until then. Releases are ad-hoc signed, not
-notarized; the `--no-quarantine` flag and the install script's xattr
-step exist for that reason, and building from source sidesteps it
-entirely.
+notarized, so Gatekeeper would block a raw double-click; the cask and
+the install script both clear the quarantine flag for you, and building
+from source sidesteps it entirely. If macOS ever still prompts, right
+click Beckon.app and choose Open once.
 
 ## Change the hotkey
 
