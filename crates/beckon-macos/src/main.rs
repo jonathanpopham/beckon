@@ -40,6 +40,8 @@ mod paste;
 #[cfg(target_os = "macos")]
 mod pasteboard;
 #[cfg(target_os = "macos")]
+mod scriptcmd;
+#[cfg(target_os = "macos")]
 mod switcher;
 #[cfg(target_os = "macos")]
 mod system;
