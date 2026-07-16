@@ -123,6 +123,11 @@ struct Engine {
     quicklinks_path: PathBuf,
     /// Activation targets for the rows currently in the table.
     results: Vec<Entry>,
+    /// The grey footer hint for the rows currently showing ("" hides).
+    footer: &'static str,
+    /// When true (fresh install, blank query), Return on the default
+    /// selection starts the walkthrough instead of launching row 0.
+    blank_return_tour: bool,
 }
 
 static ENGINE: OnceLock<Mutex<Engine>> = OnceLock::new();
@@ -411,6 +416,8 @@ pub fn init() {
             quicklinks,
             quicklinks_path,
             results: Vec::new(),
+            footer: "",
+            blank_return_tour: false,
         }))
         .is_err()
     {
@@ -457,11 +464,13 @@ pub fn summon() {
 /// The query pipeline: parse intent, compute rows, remember the matching
 /// activation entries, and hand the rows to the table.
 fn handle_query(raw: &str) {
-    let rows = {
+    let (rows, footer) = {
         let mut eng = engine().lock().unwrap();
-        eng.refresh_results(raw)
+        let rows = eng.refresh_results(raw);
+        (rows, eng.footer)
     };
     ui::set_items(&rows);
+    panel::set_footer(footer);
 }
 
 impl Engine {
@@ -472,6 +481,10 @@ impl Engine {
     fn refresh_results(&mut self, raw: &str) -> Vec<ui::RowData> {
         let now = now_secs();
         let trimmed = raw.trim();
+        // Every render resets the footer and the blank-Return diversion;
+        // the Empty branch re-arms them when appropriate.
+        self.footer = "";
+        self.blank_return_tour = false;
         // Path-shaped queries ("~/...", "/...", "./", "file://") become a
         // keyboard file browser before anything else looks at them; no
         // alias or trigger keyword can start with those characters.
@@ -536,16 +549,13 @@ impl Engine {
             // Empty query: a pure frecency list (recent habits first,
             // then alphabetical), so a fresh install shows the
             // alphabetical head of the app index. Until the walkthrough
-            // has been finished once, it leads the blank screen so a
-            // bare Return starts the tour.
+            // has been finished once, a grey footer hint offers the
+            // tour and a bare Return (default selection) starts it.
             QueryIntent::Empty => {
-                let mut rows = self.search_rows("", now);
+                let rows = self.search_rows("", now);
                 if !walkthrough::is_done() {
-                    let (title, subtitle) = walkthrough::invite_row();
-                    rows.insert(0, ui::RowData { title, subtitle });
-                    rows.truncate(self.config.max_results);
-                    self.results.insert(0, Entry::Walkthrough { next: 0 });
-                    self.results.truncate(self.config.max_results);
+                    self.blank_return_tour = true;
+                    self.footer = walkthrough::FOOTER_HINT;
                 }
                 rows
             }
@@ -788,7 +798,20 @@ impl Engine {
 /// away; success hides the panel and clears the query for the next
 /// summon.
 fn handle_activate(index: usize) {
-    let entry = engine().lock().unwrap().results.get(index).cloned();
+    let (entry, divert_to_tour) = {
+        let eng = engine().lock().unwrap();
+        (
+            eng.results.get(index).cloned(),
+            eng.blank_return_tour && index == 0,
+        )
+    };
+    // Fresh install, blank query, untouched selection: the grey footer
+    // promised that Return starts the tour. An arrowed-to row (index
+    // above 0) still activates normally.
+    if divert_to_tour {
+        show_walkthrough_step(0);
+        return;
+    }
     let Some(entry) = entry else {
         return;
     };
@@ -1007,6 +1030,10 @@ fn show_walkthrough_step(next: usize) {
                 .collect();
             {
                 let mut eng = engine().lock().unwrap();
+                // Return now advances the tour rows themselves; without
+                // this the blank-screen diversion would replay step 0
+                // forever.
+                eng.blank_return_tour = false;
                 eng.results = step
                     .iter()
                     .map(|(_, _, advances)| {
@@ -1019,6 +1046,7 @@ fn show_walkthrough_step(next: usize) {
                     .collect();
             }
             ui::set_items(&rows);
+            panel::set_footer(walkthrough::TOUR_FOOTER);
         }
         None => {
             walkthrough::mark_done();

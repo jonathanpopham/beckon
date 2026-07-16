@@ -36,6 +36,7 @@ const BACKGROUND_ALPHA: f64 = 0.97;
 
 static PANEL: AtomicPtr<ObjcObject> = AtomicPtr::new(ptr::null_mut());
 static FIELD: AtomicPtr<ObjcObject> = AtomicPtr::new(ptr::null_mut());
+static FOOTER: AtomicPtr<ObjcObject> = AtomicPtr::new(ptr::null_mut());
 static CLASS: AtomicPtr<ObjcObject> = AtomicPtr::new(ptr::null_mut());
 static DEFINE: Once = Once::new();
 
@@ -206,11 +207,66 @@ pub fn init(field_delegate: Id) {
         msg!((): field, ffi::sel("setDelegate:"), Id: field_delegate);
         msg!((): content, ffi::sel("addSubview:"), Id: field);
 
+        // The footer: one small grey line pinned to the panel's bottom
+        // edge, for quiet hints ("Return: take the walkthrough"). Hidden
+        // whenever its text is empty.
+        let footer_rect = ffi::NSRect::new(24.0, 3.0, PANEL_WIDTH - 48.0, 15.0);
+        let footer = msg!(Id: msg!(Id: ffi::class("NSTextField"), ffi::sel("alloc")),
+            ffi::sel("initWithFrame:"), ffi::NSRect: footer_rect);
+        assert!(!footer.is_null(), "footer NSTextField init returned nil");
+        msg!((): footer, ffi::sel("setEditable:"), Bool: NO);
+        msg!((): footer, ffi::sel("setSelectable:"), Bool: NO);
+        msg!((): footer, ffi::sel("setBezeled:"), Bool: NO);
+        msg!((): footer, ffi::sel("setBordered:"), Bool: NO);
+        msg!((): footer, ffi::sel("setDrawsBackground:"), Bool: NO);
+        let footer_font = msg!(Id: ffi::class("NSFont"), ffi::sel("systemFontOfSize:"), f64: 11.0);
+        msg!((): footer, ffi::sel("setFont:"), Id: footer_font);
+        let faint = msg!(Id: ffi::class("NSColor"),
+            ffi::sel("colorWithCalibratedWhite:alpha:"), f64: 1.0, f64: 0.35);
+        msg!((): footer, ffi::sel("setTextColor:"), Id: faint);
+        // NSTextAlignmentCenter.
+        msg!((): footer, ffi::sel("setAlignment:"), usize: 1);
+        msg!((): footer, ffi::sel("setHidden:"), Bool: YES);
+        msg!((): content, ffi::sel("addSubview:"), Id: footer);
+
         PANEL.store(panel, Ordering::Relaxed);
         FIELD.store(field, Ordering::Relaxed);
+        FOOTER.store(footer, Ordering::Relaxed);
 
         // The results table lives in ui.rs; it sits under the field.
         crate::ui::install(content);
+    }
+}
+
+/// Set the grey footer hint; an empty string hides it.
+pub fn set_footer(text: &str) {
+    let footer = FOOTER.load(Ordering::Relaxed);
+    if footer.is_null() {
+        return;
+    }
+    // Safety: main thread; setStringValue: takes an NSString and
+    // setHidden: takes BOOL.
+    unsafe {
+        msg!((): footer, ffi::sel("setStringValue:"), Id: ffi::nsstring(text));
+        msg!((): footer, ffi::sel("setHidden:"),
+            Bool: if text.is_empty() { YES } else { NO });
+    }
+}
+
+/// The footer's current text ("" when hidden); for the smoke test.
+pub fn footer() -> String {
+    let footer = FOOTER.load(Ordering::Relaxed);
+    if footer.is_null() {
+        return String::new();
+    }
+    // Safety: main thread; hidden and stringValue have the documented
+    // signatures.
+    unsafe {
+        let hidden = msg!(Bool: footer, ffi::sel("isHidden")) != 0;
+        if hidden {
+            return String::new();
+        }
+        ffi::nsstring_to_string(msg!(Id: footer, ffi::sel("stringValue")))
     }
 }
 

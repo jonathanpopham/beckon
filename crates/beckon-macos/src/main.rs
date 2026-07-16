@@ -292,23 +292,20 @@ mod shell {
         engine::summon();
         let visible = panel::is_visible();
         let default_rows = ui::row_count();
-        // Fresh store (temp BECKON_HOME): the blank screen leads with the
-        // walkthrough invitation; a bare Return starts the tour and each
-        // Return advances, the final one retiring the invitation.
-        let invite_ok = ui::row_at(0)
-            .unwrap_or_default()
-            .title
-            .contains("Take the walkthrough");
+        // Fresh store (temp BECKON_HOME): the blank screen shows the
+        // normal app list with a grey footer hint; a bare Return starts
+        // the tour, each Return advances, and finishing retires the
+        // hint (the footer goes empty).
+        let invite_ok = panel::footer().contains("walkthrough")
+            && ui::row_at(0).unwrap_or_default().title != "\u{25B8} Take the walkthrough";
         let _ = send_command("insertNewline:");
-        let step1_ok = ui::row_at(0).unwrap_or_default().title.contains("Step 1/");
+        let step1_ok = ui::row_at(0).unwrap_or_default().title.contains("Step 1/")
+            && panel::footer().contains("exit");
         for _ in 0..walkthrough::STEPS.len() {
             let _ = send_command("insertNewline:");
         }
         let done_ok = walkthrough::is_done();
-        let retired_ok = !ui::row_at(0)
-            .unwrap_or_default()
-            .title
-            .contains("walkthrough");
+        let retired_ok = panel::footer().is_empty();
         let tour_ok = invite_ok && step1_ok && done_ok && retired_ok;
         panel::set_query("beckon smoke");
         let round_trip = panel::query();

@@ -137,16 +137,12 @@ pub fn step_rows(index: usize) -> Option<Vec<(String, String, bool)>> {
     Some(rows)
 }
 
-/// The blank-screen invitation row (title, subtitle).
-pub fn invite_row() -> (String, String) {
-    (
-        "\u{25B8} Take the walkthrough".to_string(),
-        format!(
-            "{} steps, one Return each; type anything to skip",
-            STEPS.len()
-        ),
-    )
-}
+/// The grey footer hint on a fresh install's blank screen. Return
+/// starts the tour from there; the hint retires with the marker.
+pub const FOOTER_HINT: &str = "Return: take the walkthrough";
+
+/// The grey footer hint while the tour is showing.
+pub const TOUR_FOOTER: &str = "Return: next \u{00B7} type anything to exit";
 
 #[cfg(test)]
 mod tests {
