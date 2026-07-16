@@ -123,8 +123,7 @@ pub fn score(query: &str, candidate: &str) -> Option<FuzzyMatch> {
             }
             let mut best = UNREACHED;
             let mut best_prev = usize::MAX;
-            for j2 in (i - 1)..j {
-                let prev = dp[i - 1][j2];
+            for (j2, &prev) in dp[i - 1].iter().enumerate().take(j).skip(i - 1) {
                 if prev == UNREACHED {
                     continue;
                 }
