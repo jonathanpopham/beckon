@@ -336,19 +336,37 @@ mod shell {
         let go_sub = ui::row_at(0).unwrap_or_default().subtitle;
         let go_ok = go_sub.contains("q=rust%20launcher");
         let m3_ok = emoji_ok && uuid_ok && snip_ok && go_ok;
+        // Cmd+V routing: an Accessory app has no Edit menu, so the panel
+        // overrides performKeyEquivalent and dispatches paste: down the
+        // responder chain; prove that action path lands in the field.
+        panel::set_query("");
+        // Safety: main thread; documented NSPasteboard and NSApplication
+        // signatures, same as the engine's clipboard helpers.
+        let paste_ok = unsafe {
+            let pb = msg!(Id: ffi::class("NSPasteboard"), ffi::sel("generalPasteboard"));
+            let _ = msg!(isize: pb, ffi::sel("clearContents"));
+            let _ = msg!(Bool: pb, ffi::sel("setString:forType:"),
+                Id: ffi::nsstring("beckon paste test"),
+                Id: ffi::nsstring(PASTEBOARD_TYPE_STRING));
+            let app = msg!(Id: ffi::class("NSApplication"), ffi::sel("sharedApplication"));
+            let _ = msg!(Bool: app, ffi::sel("sendAction:to:from:"),
+                Sel: ffi::sel("paste:"), Id: ffi::NIL, Id: ffi::NIL);
+            panel::query() == "beckon paste test"
+        };
         let ok = rows > 0
             && top.title.contains("Safari")
             && down_handled
             && selection_ok
             && commands_ok
             && switcher_ok
-            && m3_ok;
+            && m3_ok
+            && paste_ok;
         SMOKE_SEARCHED.store(ok, Ordering::Relaxed);
         println!(
             "smoke: search rows={rows} top_title={:?} top_subtitle={:?} \
              moveDown handled={down_handled} selection={selected:?} \
              command_top={:?} switcher_rows={win_rows} emoji_ok={emoji_ok} \
-             uuid_ok={uuid_ok} snip_ok={snip_ok} go_ok={go_ok}",
+             uuid_ok={uuid_ok} snip_ok={snip_ok} go_ok={go_ok} paste_ok={paste_ok}",
             top.title, top.subtitle, cmd_top.title
         );
         // Safety: as in did_finish_launching.

@@ -69,6 +69,13 @@ fn panel_class() -> Id {
                         std::mem::transmute::<extern "C" fn(Id, Sel), ffi::Imp>(resign_key_window),
                         "v@:",
                     ),
+                    (
+                        "performKeyEquivalent:",
+                        std::mem::transmute::<extern "C" fn(Id, Sel, Id) -> Bool, ffi::Imp>(
+                            perform_key_equivalent,
+                        ),
+                        "c@:@",
+                    ),
                 ],
             )
         };
@@ -87,6 +94,48 @@ extern "C" fn can_become_key_window(_this: Id, _sel: Sel) -> Bool {
 /// does not handle it earlier.
 extern "C" fn cancel_operation(_this: Id, _sel: Sel, _sender: Id) {
     hide();
+}
+
+/// Map a Command chord to the standard editing action it means. Pure so
+/// the table is testable without AppKit; shift matters only for redo.
+fn edit_action_for(chars: &str, shift: bool) -> Option<&'static str> {
+    match (chars, shift) {
+        ("v", false) => Some("paste:"),
+        ("c", false) => Some("copy:"),
+        ("x", false) => Some("cut:"),
+        ("a", false) => Some("selectAll:"),
+        ("z", false) => Some("undo:"),
+        ("z", true) | ("Z", _) => Some("redo:"),
+        _ => None,
+    }
+}
+
+/// Command-key editing chords (paste, copy, cut, select all, undo, redo).
+/// An Accessory app has no main menu, so the Edit-menu key equivalents
+/// that normally deliver these never fire; without this override Cmd+V
+/// into the query field is a dead key. The action is sent down the
+/// responder chain (nil target), which lands on the field editor.
+extern "C" fn perform_key_equivalent(this: Id, _sel: Sel, event: Id) -> Bool {
+    /// NSEventModifierFlagCommand and ...Shift, from NSEvent.h.
+    const FLAG_COMMAND: usize = 1 << 20;
+    const FLAG_SHIFT: usize = 1 << 17;
+    // Safety: main thread; NSEvent responds to modifierFlags (NSUInteger)
+    // and charactersIgnoringModifiers (NSString), and NSApplication's
+    // sendAction:to:from: has the documented signature.
+    unsafe {
+        let flags = msg!(usize: event, ffi::sel("modifierFlags"));
+        if flags & FLAG_COMMAND == 0 {
+            return NO;
+        }
+        let chars =
+            ffi::nsstring_to_string(msg!(Id: event, ffi::sel("charactersIgnoringModifiers")));
+        let Some(action) = edit_action_for(&chars, flags & FLAG_SHIFT != 0) else {
+            return NO;
+        };
+        let app = msg!(Id: ffi::class("NSApplication"), ffi::sel("sharedApplication"));
+        msg!(Bool: app, ffi::sel("sendAction:to:from:"),
+            Sel: ffi::sel(action), Id: ffi::NIL, Id: this)
+    }
 }
 
 /// Losing key status (click elsewhere, another window summoned) dismisses
@@ -280,5 +329,29 @@ pub fn query() -> String {
     unsafe {
         let ns = msg!(Id: field, ffi::sel("stringValue"));
         ffi::nsstring_to_string(ns)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::edit_action_for;
+
+    #[test]
+    fn command_chords_map_to_editing_actions() {
+        assert_eq!(edit_action_for("v", false), Some("paste:"));
+        assert_eq!(edit_action_for("c", false), Some("copy:"));
+        assert_eq!(edit_action_for("x", false), Some("cut:"));
+        assert_eq!(edit_action_for("a", false), Some("selectAll:"));
+        assert_eq!(edit_action_for("z", false), Some("undo:"));
+        assert_eq!(edit_action_for("z", true), Some("redo:"));
+        assert_eq!(edit_action_for("Z", true), Some("redo:"));
+    }
+
+    #[test]
+    fn unrelated_chords_fall_through() {
+        assert_eq!(edit_action_for("v", true), None);
+        assert_eq!(edit_action_for("q", false), None);
+        assert_eq!(edit_action_for("w", false), None);
+        assert_eq!(edit_action_for("", false), None);
     }
 }
