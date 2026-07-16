@@ -18,6 +18,7 @@
 //!   emoji      curated emoji and symbol picker table plus keyword search
 //!   devutil    one-shot developer transforms (uuid, base64, hashes, dates)
 //!   persist    canonical JSON codec and atomic file store
+//!   rpc        plugin protocol: JSON-RPC 2.0 framing over the persist codec
 
 pub mod calc;
 pub mod clipstore;
@@ -28,6 +29,7 @@ pub mod fuzzy;
 pub mod persist;
 pub mod quicklinks;
 pub mod router;
+pub mod rpc;
 pub mod snippets;
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
