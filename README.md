@@ -47,6 +47,20 @@ no JS runtime, no wrapper crates, no build.rs.
 
 ## Install
 
+Homebrew:
+
+```sh
+brew install --cask jonathanpopham/tap/beckon --no-quarantine
+```
+
+Or the install script (downloads the latest release to /Applications):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/jonathanpopham/beckon/main/scripts/install.sh | sh
+```
+
+Or from source (no toolchain beyond Rust):
+
 ```sh
 git clone https://github.com/jonathanpopham/beckon
 cd beckon
@@ -54,10 +68,25 @@ scripts/bundle.sh
 open dist/Beckon.app
 ```
 
-Press Option+Space. Add `dist/Beckon.app` to System Settings > Login
-Items to start it at login. Window management and paste need one
-Accessibility grant; beckon offers the prompt when a feature first needs
-it and degrades gracefully until then.
+Press Option+Space. Add `Beckon.app` to System Settings > Login Items to
+start it at login. Window management and paste need one Accessibility
+grant; beckon offers the prompt when a feature first needs it and
+degrades gracefully until then. Releases are ad-hoc signed, not
+notarized; the `--no-quarantine` flag and the install script's xattr
+step exist for that reason, and building from source sidesteps it
+entirely.
+
+## Change the hotkey
+
+`~/.beckon/config.json`:
+
+```json
+{ "hotkey": { "key": "space", "modifiers": ["cmd", "shift"] } }
+```
+
+Keys: letters, digits, `space`, `tab`, `return`, `f1` to `f12`.
+Modifiers: `cmd`, `opt`, `ctrl`, `shift` in any combination. Restart
+beckon and the startup line confirms the chord.
 
 ## Configure
 
