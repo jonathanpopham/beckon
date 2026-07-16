@@ -4,11 +4,11 @@ version = 4
 
 [[package]]
 name = "beckon-core"
-version = "0.1.1"
+version = "0.1.2"
 
 [[package]]
 name = "beckon-macos"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "beckon-core",
 ]

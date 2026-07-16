@@ -312,17 +312,42 @@ pub fn items(query: &str) -> Vec<Item> {
         .map(|e| item_for(&e.name, &e.path, &home))
         .collect();
     if out.len() < LOCAL_MIN_ROWS {
-        for (name, path) in spotlight(q) {
-            if out.len() >= RESULT_CAP {
-                break;
-            }
-            if !seen.insert(path.clone()) {
-                continue;
-            }
-            out.push(item_for(&name, &path, &home));
-        }
+        append_spotlight(spotlight(q), &mut seen, &mut out, &home);
+    }
+    // Last resort: nothing under $HOME is even NAMED like the query, so
+    // ask Spotlight to match document contents ("resume" finds the
+    // resume PDF whatever its file name is).
+    if out.is_empty() {
+        append_spotlight(spotlight_content(q), &mut seen, &mut out, &home);
     }
     out
+}
+
+/// Append Spotlight hits, deduped and junk-filtered, up to the cap.
+/// Spotlight has no skip list of its own: without the filter, a query
+/// like "resume" surfaces node_modules and build junk from anywhere
+/// under $HOME.
+fn append_spotlight(
+    hits: Vec<(String, String)>,
+    seen: &mut HashSet<String>,
+    out: &mut Vec<Item>,
+    home: &str,
+) {
+    for (name, path) in hits {
+        if out.len() >= RESULT_CAP {
+            break;
+        }
+        if path
+            .split('/')
+            .any(|part| SKIP_DIRS.contains(&part) || (part.starts_with('.') && part.len() > 1))
+        {
+            continue;
+        }
+        if !seen.insert(path.clone()) {
+            continue;
+        }
+        out.push(item_for(&name, &path, home));
+    }
 }
 
 /// Tier 2: ask Spotlight for filename matches under $HOME. Returns
@@ -343,22 +368,45 @@ pub fn items(query: &str) -> Vec<Item> {
 /// most the cap in lines and then killing and waiting on the child, which
 /// both bounds the work and reaps the process.
 pub fn spotlight(query: &str) -> Vec<(String, String)> {
-    let home = home_string();
-    if home.is_empty() {
-        return Vec::new();
+    match sanitize_spotlight(query) {
+        Some(s) => run_mdfind(&format!("kMDItemFSName == '*{s}*'c")),
+        None => Vec::new(),
     }
+}
+
+/// Tier 3: Spotlight CONTENT search, the last resort when nothing under
+/// $HOME is named like the query: a plain `mdfind -onlyin "$HOME"
+/// <query>` matches text inside documents (a resume that is actually
+/// named JP-2026.pdf still surfaces for "resume").
+pub fn spotlight_content(query: &str) -> Vec<(String, String)> {
+    match sanitize_spotlight(query) {
+        Some(s) => run_mdfind(&s),
+        None => Vec::new(),
+    }
+}
+
+/// Strip metadata-query metacharacters; None when nothing survives.
+fn sanitize_spotlight(query: &str) -> Option<String> {
     let sanitized: String = query
         .chars()
         .filter(|c| !matches!(c, '\'' | '"' | '\\' | '*'))
         .collect();
     if sanitized.trim().is_empty() {
+        None
+    } else {
+        Some(sanitized)
+    }
+}
+
+fn run_mdfind(md_query: &str) -> Vec<(String, String)> {
+    let home = home_string();
+    if home.is_empty() {
         return Vec::new();
     }
-    let md_query = format!("kMDItemFSName == '*{sanitized}*'c");
     let Ok(mut child) = Command::new("/usr/bin/mdfind")
         .arg("-onlyin")
         .arg(&home)
-        .arg(&md_query)
+        .arg(md_query)
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .stdin(Stdio::null())

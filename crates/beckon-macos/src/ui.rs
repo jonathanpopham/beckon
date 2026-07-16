@@ -87,6 +87,13 @@ extern "C" fn number_of_rows(_this: Id, _sel: Sel, _table: Id) -> isize {
     items().lock().unwrap().len() as isize
 }
 
+/// The table's doubleAction: a double click activates the clicked row,
+/// exactly like Return on it. Clicking already moved the selection, so
+/// the shared activation path applies.
+extern "C" fn row_double_clicked(_this: Id, _sel: Sel, _sender: Id) {
+    activate_selected();
+}
+
 extern "C" fn object_value(_this: Id, _sel: Sel, table: Id, _column: Id, row: isize) -> Id {
     let guard = items().lock().unwrap();
     let Some(data) = usize::try_from(row).ok().and_then(|i| guard.get(i)) else {
@@ -195,6 +202,11 @@ fn data_source() -> Id {
                             object_value,
                         ),
                         "@@:@@q",
+                    ),
+                    (
+                        "beckonRowDoubleClicked:",
+                        transmute::<extern "C" fn(Id, Sel, Id), ffi::Imp>(row_double_clicked),
+                        "v@:@",
                     ),
                 ],
             );
@@ -334,7 +346,17 @@ pub fn install(content: Id) {
             ffi::sel("initWithIdentifier:"), Id: ffi::nsstring("beckon.results"));
         assert!(!column.is_null(), "NSTableColumn init returned nil");
         msg!((): column, ffi::sel("setWidth:"), f64: width - 4.0);
+        // Rows are results, not documents: a double click must never
+        // drop a field editor into the cell (setEditable:NO on both the
+        // column and its cell); it activates the row instead, matching
+        // Return.
+        msg!((): column, ffi::sel("setEditable:"), Bool: NO);
+        let cell = msg!(Id: column, ffi::sel("dataCell"));
+        msg!((): cell, ffi::sel("setEditable:"), Bool: NO);
+        msg!((): cell, ffi::sel("setSelectable:"), Bool: NO);
         msg!((): table, ffi::sel("addTableColumn:"), Id: column);
+        msg!((): table, ffi::sel("setTarget:"), Id: ds);
+        msg!((): table, ffi::sel("setDoubleAction:"), Sel: ffi::sel("beckonRowDoubleClicked:"));
 
         msg!((): table, ffi::sel("setDataSource:"), Id: ds);
         msg!((): scroll, ffi::sel("setDocumentView:"), Id: table);

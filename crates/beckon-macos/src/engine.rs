@@ -655,6 +655,22 @@ impl Engine {
                 subtitle: r.item.subtitle,
             });
         }
+        // Files fill the remaining slots: a query that misses every app
+        // and command must never show an empty panel when a filename
+        // matches. Apps and commands keep priority; the dedicated "file"
+        // trigger remains the full file view.
+        if !query.is_empty() && rows.len() < self.config.max_results {
+            for item in files::items(query) {
+                if rows.len() >= self.config.max_results {
+                    break;
+                }
+                rows.push(ui::RowData {
+                    title: item.title,
+                    subtitle: item.subtitle,
+                });
+                self.results.push(Entry::File { id: item.id });
+            }
+        }
         rows
     }
 
