@@ -633,7 +633,7 @@ mod tests {
 
     fn desktop() -> Vec<WinInfo> {
         vec![
-            w(300, 31, "Terminal", "zsh: ~/geist"),
+            w(300, 31, "Terminal", "zsh: ~/projects"),
             w(100, 12, "Safari", "Rust std docs"),
             w(100, 11, "Safari", ""),
             w(100, 10, "Safari", "GitHub"),
