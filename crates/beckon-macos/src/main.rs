@@ -46,6 +46,8 @@ mod switcher;
 #[cfg(target_os = "macos")]
 mod system;
 #[cfg(target_os = "macos")]
+mod theme;
+#[cfg(target_os = "macos")]
 mod ui;
 #[cfg(target_os = "macos")]
 mod winmgmt;

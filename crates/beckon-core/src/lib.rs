@@ -12,6 +12,7 @@
 //!   frecency   integer half-life usage ranking
 //!   router     query parsing and command dispatch
 //!   calc       calculator (fixed-point, units, bases, dates)
+//!   config     the config file model (aliases, hotkey, theme, triggers)
 //!   clipstore  clipboard history model
 //!   snippets   snippet store and placeholder expansion
 //!   quicklinks parameterized links
@@ -21,6 +22,7 @@
 
 pub mod calc;
 pub mod clipstore;
+pub mod config;
 pub mod devutil;
 pub mod emoji;
 pub mod frecency;

@@ -30,6 +30,9 @@ const COLLECTION_CAN_JOIN_ALL_SPACES: usize = 1 << 0;
 const COLLECTION_FULL_SCREEN_AUXILIARY: usize = 1 << 8;
 // NSFocusRingTypeNone.
 const FOCUS_RING_NONE: usize = 1;
+// Panel background translucency. Fixed across restyles: set_colors only
+// swaps the RGB channels, so a themed panel keeps the same glassiness.
+const BACKGROUND_ALPHA: f64 = 0.97;
 
 static PANEL: AtomicPtr<ObjcObject> = AtomicPtr::new(ptr::null_mut());
 static FIELD: AtomicPtr<ObjcObject> = AtomicPtr::new(ptr::null_mut());
@@ -132,7 +135,7 @@ pub fn init(field_delegate: Id) {
         msg!((): layer, ffi::sel("setCornerRadius:"), f64: 14.0);
         let dark = msg!(Id: ffi::class("NSColor"),
             ffi::sel("colorWithCalibratedRed:green:blue:alpha:"),
-            f64: 0.11, f64: 0.11, f64: 0.13, f64: 0.97);
+            f64: 0.11, f64: 0.11, f64: 0.13, f64: BACKGROUND_ALPHA);
         let dark_cg = msg!(Id: dark, ffi::sel("CGColor"));
         msg!((): layer, ffi::sel("setBackgroundColor:"), Id: dark_cg);
 
@@ -225,6 +228,47 @@ pub fn set_query(text: &str) {
 /// Null until init has run.
 pub fn field() -> Id {
     FIELD.load(Ordering::Relaxed)
+}
+
+/// Restyle the panel and the query field from a theme: the content
+/// layer's background color (RGB only; alpha stays BACKGROUND_ALPHA), the
+/// field's text color, and the field's font size. Channels are 0..=255;
+/// the CGFloat conversion happens here at the FFI edge. Safe to call
+/// before init (it returns without touching anything) and idempotent;
+/// call on the main thread like every other panel function. Row text
+/// colors live in ui.rs and are themed separately (see theme.rs).
+#[allow(dead_code)] // called by theme::apply, which the integrator wires
+pub fn set_colors(background: (u8, u8, u8), foreground: (u8, u8, u8), font_size: u32) {
+    let panel = PANEL.load(Ordering::Relaxed);
+    let field = FIELD.load(Ordering::Relaxed);
+    if panel.is_null() || field.is_null() {
+        return;
+    }
+    let channel = |c: u8| f64::from(c) / 255.0;
+    // Safety: main thread; every msg! spells the documented AppKit
+    // signature (colorWithCalibratedRed:green:blue:alpha: takes four
+    // CGFloats, CGColor returns a CGColorRef, setBackgroundColor: on a
+    // CALayer takes a CGColorRef, setTextColor:/setFont: take an
+    // NSColor/NSFont). The panel and field pointers were stored by init
+    // and are never released (module invariant).
+    unsafe {
+        let content = msg!(Id: panel, ffi::sel("contentView"));
+        let layer = msg!(Id: content, ffi::sel("layer"));
+        let bg = msg!(Id: ffi::class("NSColor"),
+            ffi::sel("colorWithCalibratedRed:green:blue:alpha:"),
+            f64: channel(background.0), f64: channel(background.1),
+            f64: channel(background.2), f64: BACKGROUND_ALPHA);
+        let bg_cg = msg!(Id: bg, ffi::sel("CGColor"));
+        msg!((): layer, ffi::sel("setBackgroundColor:"), Id: bg_cg);
+        let fg = msg!(Id: ffi::class("NSColor"),
+            ffi::sel("colorWithCalibratedRed:green:blue:alpha:"),
+            f64: channel(foreground.0), f64: channel(foreground.1),
+            f64: channel(foreground.2), f64: 1.0);
+        msg!((): field, ffi::sel("setTextColor:"), Id: fg);
+        let font = msg!(Id: ffi::class("NSFont"), ffi::sel("systemFontOfSize:"),
+            f64: f64::from(font_size));
+        msg!((): field, ffi::sel("setFont:"), Id: font);
+    }
 }
 
 /// Read the query field's current text.
