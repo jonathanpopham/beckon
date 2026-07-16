@@ -56,6 +56,8 @@ mod theme;
 #[cfg(target_os = "macos")]
 mod ui;
 #[cfg(target_os = "macos")]
+mod walkthrough;
+#[cfg(target_os = "macos")]
 mod winmgmt;
 
 fn main() {
@@ -93,7 +95,7 @@ mod shell {
     //! module only glues them together.
 
     use crate::ffi::{self, msg, Bool, Id, Sel};
-    use crate::{engine, hotkey, panel, theme, ui};
+    use crate::{engine, hotkey, panel, theme, ui, walkthrough};
     use beckon_core::frecency::FrecencyStore;
     use std::mem::transmute;
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -290,13 +292,32 @@ mod shell {
         engine::summon();
         let visible = panel::is_visible();
         let default_rows = ui::row_count();
+        // Fresh store (temp BECKON_HOME): the blank screen leads with the
+        // walkthrough invitation; a bare Return starts the tour and each
+        // Return advances, the final one retiring the invitation.
+        let invite_ok = ui::row_at(0)
+            .unwrap_or_default()
+            .title
+            .contains("Take the walkthrough");
+        let _ = send_command("insertNewline:");
+        let step1_ok = ui::row_at(0).unwrap_or_default().title.contains("Step 1/");
+        for _ in 0..walkthrough::STEPS.len() {
+            let _ = send_command("insertNewline:");
+        }
+        let done_ok = walkthrough::is_done();
+        let retired_ok = !ui::row_at(0)
+            .unwrap_or_default()
+            .title
+            .contains("walkthrough");
+        let tour_ok = invite_ok && step1_ok && done_ok && retired_ok;
         panel::set_query("beckon smoke");
         let round_trip = panel::query();
-        let ok = visible && default_rows > 0 && round_trip == "beckon smoke";
+        let ok = visible && default_rows > 0 && round_trip == "beckon smoke" && tour_ok;
         SMOKE_SHOWED.store(ok, Ordering::Relaxed);
         println!(
             "smoke: shown visible={visible} default_rows={default_rows} \
-             nsstring_roundtrip={round_trip:?}"
+             nsstring_roundtrip={round_trip:?} walkthrough invite={invite_ok} \
+             step1={step1_ok} done={done_ok} retired={retired_ok}"
         );
         // Safety: as in did_finish_launching.
         unsafe { perform_after(this, "beckonSmokeSearch:", 0.2) };

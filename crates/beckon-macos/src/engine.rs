@@ -34,7 +34,7 @@
 use crate::ffi::{self, msg, Bool, Id};
 use crate::{
     apps, files, hotkey, menubar, onboarding, panel, paste, pasteboard, pathnav, plugins,
-    scriptcmd, switcher, system, theme, ui, winmgmt,
+    scriptcmd, switcher, system, theme, ui, walkthrough, winmgmt,
 };
 use beckon_core::config::{self, Config};
 use beckon_core::frecency::FrecencyStore;
@@ -90,6 +90,11 @@ enum Entry {
     Plugin { id: String },
     /// A path-browser row: open, reveal, preview, copy, or drill deeper.
     Path(pathnav::PathAction),
+    /// Show walkthrough step `next` on Return (one past the end
+    /// finishes the tour and retires the blank-screen row).
+    Walkthrough { next: usize },
+    /// An informational row; Return does nothing.
+    Noop,
 }
 
 struct Engine {
@@ -383,6 +388,13 @@ pub fn init() {
     // world visible in the startup log either way.
     commands.extend(onboarding::items());
     println!("beckon: {}", onboarding::status_line());
+    // The tour stays reachable after the blank-screen row retires.
+    commands.push(Item::new(
+        "beckon.walkthrough",
+        "Walkthrough",
+        "a guided tour of everything beckon does",
+        router::ItemKind::SystemCommand,
+    ));
 
     if ENGINE
         .set(Mutex::new(Engine {
@@ -523,8 +535,20 @@ impl Engine {
         match QueryIntent::parse(raw) {
             // Empty query: a pure frecency list (recent habits first,
             // then alphabetical), so a fresh install shows the
-            // alphabetical head of the app index.
-            QueryIntent::Empty => self.search_rows("", now),
+            // alphabetical head of the app index. Until the walkthrough
+            // has been finished once, it leads the blank screen so a
+            // bare Return starts the tour.
+            QueryIntent::Empty => {
+                let mut rows = self.search_rows("", now);
+                if !walkthrough::is_done() {
+                    let (title, subtitle) = walkthrough::invite_row();
+                    rows.insert(0, ui::RowData { title, subtitle });
+                    rows.truncate(self.config.max_results);
+                    self.results.insert(0, Entry::Walkthrough { next: 0 });
+                    self.results.truncate(self.config.max_results);
+                }
+                rows
+            }
             QueryIntent::Search(q) => self.search_rows(&q, now),
             QueryIntent::Calc(expr) => match calc::eval(&expr) {
                 Ok(result) => {
@@ -786,6 +810,10 @@ fn handle_activate(index: usize) {
             }
         }
         Entry::Command { id } => {
+            if id == "beckon.walkthrough" {
+                show_walkthrough_step(0);
+                return;
+            }
             let result = if id.starts_with("window.") {
                 winmgmt::activate(&id)
             } else if id.starts_with("onboarding.") {
@@ -924,6 +952,8 @@ fn handle_activate(index: usize) {
             }
             pathnav::PathAction::None => {}
         },
+        Entry::Walkthrough { next } => show_walkthrough_step(next),
+        Entry::Noop => {}
         Entry::Plugin { id } => match plugins::activate(&id) {
             Ok(plugins::PluginAction::None) => dismiss(),
             Ok(plugins::PluginAction::Copy(text)) => {
@@ -957,6 +987,42 @@ fn handle_activate(index: usize) {
             } else {
                 eprintln!("beckon: could not open {url}");
             }
+        }
+    }
+}
+
+/// Render walkthrough step `next`, or finish the tour when Return walks
+/// past the last step: the marker retires the blank-screen row and the
+/// panel returns to the normal empty view. The panel stays up
+/// throughout; typing anything re-enters the query pipeline naturally.
+fn show_walkthrough_step(next: usize) {
+    match walkthrough::step_rows(next) {
+        Some(step) => {
+            let rows: Vec<ui::RowData> = step
+                .iter()
+                .map(|(title, subtitle, _)| ui::RowData {
+                    title: title.clone(),
+                    subtitle: subtitle.clone(),
+                })
+                .collect();
+            {
+                let mut eng = engine().lock().unwrap();
+                eng.results = step
+                    .iter()
+                    .map(|(_, _, advances)| {
+                        if *advances {
+                            Entry::Walkthrough { next: next + 1 }
+                        } else {
+                            Entry::Noop
+                        }
+                    })
+                    .collect();
+            }
+            ui::set_items(&rows);
+        }
+        None => {
+            walkthrough::mark_done();
+            handle_query("");
         }
     }
 }
