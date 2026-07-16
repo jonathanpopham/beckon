@@ -1,0 +1,471 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>beckon</title>
+<meta name="description" content="beckon is a free, MIT-licensed keyboard launcher for macOS. Zero dependencies, no subscription, no account, no telemetry, zero network calls. Press Option+Space and type.">
+<meta name="author" content="Jonathan Popham">
+<link rel="canonical" href="https://jonathanpopham.com/beckon/">
+<meta property="og:title" content="beckon">
+<meta property="og:description" content="A keyboard launcher for macOS. Zero dependencies. No subscription.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://jonathanpopham.com/beckon/">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="beckon">
+<meta name="twitter:description" content="A keyboard launcher for macOS. Zero dependencies. No subscription.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='22' fill='%231C1C21'/%3E%3Ctext x='50' y='70' font-size='58' text-anchor='middle' font-family='monospace' fill='%235AC8FA'%3Eb%3C/text%3E%3C/svg%3E">
+<style>
+:root{
+  --bg:#131316; --panel:#1C1C21; --panel2:#212127; --field:#17171b;
+  --ink:#F2F2F6; --dim:#A2A2AE; --faint:#6E6E7A;
+  --accent:#5AC8FA; --accent-dim:#3E8FB5;
+  --line:#2C2C34; --line2:#232329;
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,sans-serif;
+}
+*{box-sizing:border-box}
+html{scroll-padding-top:24px}
+@media (prefers-reduced-motion:no-preference){html{scroll-behavior:smooth}}
+html,body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans)}
+body{line-height:1.6;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+::selection{background:var(--accent);color:var(--bg)}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+.wrap{max-width:960px;margin:0 auto;padding:0 24px}
+section{padding:64px 0;border-top:1px solid var(--line2)}
+@media(max-width:640px){section{padding:48px 0}.wrap{padding:0 20px}}
+.kicker{font-family:var(--mono);font-size:12px;letter-spacing:.2em;text-transform:uppercase;color:var(--accent);margin:0 0 12px}
+h1{font-size:clamp(40px,8vw,72px);line-height:1;margin:0 0 14px;font-weight:760;letter-spacing:-.02em;font-family:var(--mono)}
+h1 .dot{color:var(--accent)}
+h2{font-size:clamp(23px,4vw,34px);line-height:1.14;margin:0 0 12px;font-weight:720;letter-spacing:-.01em;text-wrap:balance}
+h3{font-size:16px;margin:0 0 6px;font-weight:650}
+p.lead{color:var(--dim);font-size:clamp(15.5px,1.9vw,18px);max-width:64ch;margin:0 0 18px}
+p.lead em{color:var(--ink);font-style:normal;font-weight:600}
+
+/* hero */
+.hero{padding:72px 0 56px;position:relative;overflow:hidden;border-top:0}
+.hero::before{content:'';position:absolute;top:-220px;left:50%;transform:translateX(-50%);
+  width:900px;height:520px;border-radius:50%;pointer-events:none;
+  background:radial-gradient(closest-side,rgba(90,200,250,.10),transparent 70%)}
+.hero>.wrap{position:relative}
+@media(max-width:640px){.hero{padding:52px 0 44px}}
+.oneliner{font-size:clamp(17px,2.4vw,22px);color:var(--ink);margin:0 0 8px;font-weight:600;max-width:34ch;line-height:1.35;text-wrap:balance}
+.sub{color:var(--dim);font-size:clamp(14px,1.8vw,16.5px);max-width:60ch;margin:0 0 26px}
+
+/* keycaps */
+.summon{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 28px;font-family:var(--mono);color:var(--faint);font-size:13px}
+.key{display:inline-flex;align-items:center;justify-content:center;min-width:46px;height:44px;padding:0 14px;
+  font-family:var(--mono);font-size:15px;font-weight:600;color:var(--ink);
+  background:linear-gradient(180deg,#2a2a31,#1e1e24);border:1px solid #3b3b45;border-bottom:3px solid #3b3b45;
+  border-radius:9px;box-shadow:0 6px 16px rgba(0,0,0,.45),inset 0 1px 0 rgba(255,255,255,.06)}
+.key small{font-size:10px;color:var(--faint);font-weight:500;margin-left:7px;letter-spacing:.08em}
+.summon .plus{font-size:15px}
+.summon .then{margin-left:4px}
+
+.cta{display:flex;flex-wrap:wrap;gap:11px;margin:0 0 30px}
+.btn{display:inline-flex;align-items:center;font-family:var(--mono);font-size:13px;padding:12px 18px;
+  min-height:44px;border-radius:9px;border:1px solid var(--line);background:var(--panel);color:var(--ink);
+  transition:border-color .15s,color .15s}
+.btn:hover{border-color:var(--accent);color:var(--accent);text-decoration:none}
+.btn.primary{background:var(--accent);color:#0d0d10;border-color:var(--accent);font-weight:700}
+.btn.primary:hover{filter:brightness(1.08);color:#0d0d10}
+
+/* code blocks + copy */
+.codeblock{position:relative;background:#111114;border:1px solid var(--line);border-radius:11px;margin:14px 0 0;overflow:hidden}
+.codeblock .cbar{display:flex;align-items:center;justify-content:space-between;gap:10px;
+  padding:8px 8px 8px 14px;background:var(--panel);border-bottom:1px solid var(--line)}
+.codeblock .cl{font-family:var(--mono);font-size:11px;color:var(--faint);letter-spacing:.08em;text-transform:uppercase;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.copy{font-family:var(--mono);font-size:11px;color:var(--dim);background:transparent;border:1px solid var(--line);
+  border-radius:6px;padding:6px 12px;min-height:30px;cursor:pointer;flex:none;transition:color .15s,border-color .15s}
+.copy:hover{color:var(--accent);border-color:var(--accent)}
+.codeblock pre{margin:0;padding:14px 16px;overflow-x:auto;font-family:var(--mono);
+  font-size:clamp(11.5px,1.6vw,13.5px);line-height:1.65;color:var(--ink)}
+.codeblock pre .cm{color:var(--faint)}
+.codeblock pre .k{color:var(--accent)}
+.codeblock pre .s{color:#a8d98a}
+.hero .codeblock{max-width:640px}
+.blocknote{font-family:var(--mono);font-size:12px;color:var(--faint);margin:10px 0 0;line-height:1.7;max-width:64ch}
+.blocknote b{color:var(--dim);font-weight:600}
+code.inl{font-family:var(--mono);font-size:.92em;background:var(--panel);border:1px solid var(--line);
+  border-radius:5px;padding:1px 6px;color:var(--ink);white-space:nowrap}
+
+/* launcher mockup */
+.stage{padding:48px 0 8px;display:flex;justify-content:center;position:relative}
+.stage::before{content:'';position:absolute;inset:0;pointer-events:none;
+  background:radial-gradient(60% 80% at 50% 40%,rgba(90,200,250,.06),transparent 70%)}
+.launcher{position:relative;width:100%;max-width:620px;background:#1C1C21;border:1px solid #34343e;border-radius:14px;
+  box-shadow:0 30px 80px rgba(0,0,0,.6),0 4px 18px rgba(0,0,0,.4),inset 0 1px 0 rgba(255,255,255,.05);overflow:hidden}
+.qline{display:flex;align-items:center;gap:12px;padding:16px 18px;border-bottom:1px solid #2a2a33}
+.qglyph{color:var(--accent);font-family:var(--mono);font-size:18px;flex:none}
+.qtext{font-family:var(--mono);font-size:clamp(16px,3vw,21px);color:#FFFFFF;white-space:nowrap;overflow:hidden}
+.caret{display:inline-block;width:9px;height:1.15em;background:var(--accent);vertical-align:-3px;margin-left:1px;
+  animation:blink 1s steps(1) infinite}
+@keyframes blink{50%{opacity:0}}
+.qhint{margin-left:auto;flex:none;font-family:var(--mono);font-size:11px;color:var(--faint);
+  border:1px solid #2f2f38;border-radius:6px;padding:3px 8px}
+.prows{padding:6px}
+.prow{display:flex;flex-direction:column;gap:1px;padding:10px 13px;border-radius:8px}
+.prow .pt{font-size:15px;color:#FFFFFF;font-weight:500;line-height:1.35}
+.prow .ps{font-size:12.5px;color:var(--faint);font-family:var(--mono);line-height:1.5}
+.prow.sel{background:rgba(90,200,250,.13);box-shadow:inset 2px 0 0 var(--accent)}
+.prow.sel .pt{color:var(--accent)}
+.prow.sel .ps{color:var(--dim)}
+.pfoot{display:flex;gap:16px;padding:9px 16px;border-top:1px solid #2a2a33;
+  font-family:var(--mono);font-size:11px;color:var(--faint)}
+.pfoot b{color:var(--dim);font-weight:500}
+.stagecap{text-align:center;font-family:var(--mono);font-size:12px;color:var(--faint);margin:18px 0 0;padding:0 20px}
+@media (prefers-reduced-motion:reduce){.caret{animation:none}}
+
+/* card grid */
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:13px;margin-top:26px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 16px 14px;
+  display:flex;flex-direction:column;transition:border-color .2s}
+.card:hover{border-color:var(--accent-dim)}
+.card .n{font-family:var(--mono);font-size:11px;color:var(--accent);letter-spacing:.14em;text-transform:uppercase;margin-bottom:7px}
+.card p{margin:3px 0 0;color:var(--dim);font-size:13.5px;line-height:1.55;flex:1}
+.card p code{font-family:var(--mono);font-size:.92em;color:var(--ink);background:var(--field);
+  border:1px solid var(--line2);border-radius:4px;padding:0 5px}
+
+/* the bet */
+.bet{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:13px;margin-top:26px}
+.bet .b{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px}
+.bet .b .t{font-family:var(--mono);font-size:13px;color:var(--ink);font-weight:600;margin-bottom:6px}
+.bet .b .t b{color:var(--accent);font-weight:600}
+.bet .b p{margin:0;color:var(--dim);font-size:13.5px;line-height:1.6}
+.gateline{margin-top:22px;background:var(--panel);border:1px solid var(--line);border-radius:12px;
+  padding:15px 18px;font-family:var(--mono);font-size:13px;color:var(--dim);line-height:1.7}
+.gateline b{color:var(--accent);font-weight:600}
+
+/* customize */
+.cfg{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);gap:22px;margin-top:8px;align-items:start}
+@media(max-width:840px){.cfg{grid-template-columns:1fr}}
+.cfg .codeblock pre{font-size:12px}
+.cfglist{margin:14px 0 0;padding:0;list-style:none}
+.cfglist li{padding:11px 2px;border-top:1px solid var(--line2);font-size:14px;color:var(--dim);line-height:1.55}
+.cfglist li:last-child{border-bottom:1px solid var(--line2)}
+.cfglist b{color:var(--ink);font-family:var(--mono);font-size:13px;font-weight:600}
+
+/* install */
+.inst{margin-top:26px;display:flex;flex-direction:column;gap:26px}
+.inst h3{font-family:var(--mono);font-size:14px;font-weight:600}
+.inst h3 span{color:var(--faint);font-weight:500}
+.notes{margin-top:28px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:6px 18px}
+.notes .row{display:flex;gap:14px;padding:13px 0;border-bottom:1px solid var(--line2);font-size:13.5px;color:var(--dim);line-height:1.6}
+.notes .row:last-child{border-bottom:0}
+.notes .k{color:var(--accent);font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;
+  flex:none;width:92px;padding-top:3px}
+@media(max-width:520px){.notes .row{flex-direction:column;gap:3px}.notes .k{width:auto}}
+
+footer{border-top:1px solid var(--line);padding:30px 0 56px;color:var(--faint);font-size:13px}
+footer .wrap{display:flex;flex-wrap:wrap;gap:10px 22px;justify-content:space-between;align-items:baseline}
+footer .links{display:flex;flex-wrap:wrap;gap:4px 18px}
+footer .links a{font-family:var(--mono);font-size:12.5px;padding:6px 0}
+footer .g{font-family:var(--mono);line-height:1.7}
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <div class="wrap">
+    <p class="kicker">free · open source · MIT</p>
+    <h1>beckon<span class="dot">.</span></h1>
+    <p class="oneliner">A keyboard launcher for macOS. Zero dependencies. No subscription.</p>
+    <p class="sub">No account, no telemetry, and zero network calls in the shipped build. Two std-only Rust crates and hand-rolled Objective-C FFI. Press the hotkey, a panel appears, you type, things happen.</p>
+    <div class="summon" aria-label="Summon with Option plus Space">
+      <span class="key">&#8997;<small>option</small></span>
+      <span class="plus">+</span>
+      <span class="key">&#9251;<small>space</small></span>
+      <span class="then">to summon</span>
+    </div>
+    <div class="cta">
+      <a class="btn primary" href="#install">Install</a>
+      <a class="btn" href="https://github.com/jonathanpopham/beckon">GitHub &#8599;</a>
+    </div>
+    <div class="codeblock">
+      <div class="cbar"><span class="cl">install with homebrew</span><button class="copy" type="button" data-copy="brew install --cask jonathanpopham/tap/beckon">copy</button></div>
+      <pre>brew install --cask jonathanpopham/tap/beckon</pre>
+    </div>
+    <p class="blocknote">Or the <a href="#install">install script, or build from source</a>. Add <code class="inl">--no-quarantine</code> to skip the Gatekeeper prompt for this ad-hoc-signed build.</p>
+  </div>
+</div>
+
+<div class="stage" aria-hidden="true">
+  <div class="launcher">
+    <div class="qline">
+      <span class="qglyph">&#9656;</span>
+      <span class="qtext" id="demo-q"></span><span class="caret" id="demo-caret"></span>
+      <span class="qhint">&#8997;&#9251;</span>
+    </div>
+    <div class="prows" id="demo-rows"></div>
+    <div class="pfoot"><span><b>&#8593;&#8595;</b> navigate</span><span><b>return</b> run</span><span><b>esc</b> hide</span></div>
+  </div>
+</div>
+<p class="stagecap">The panel, drawn in CSS. Same layout, same colors, same font as the default theme.</p>
+
+<section id="features">
+  <div class="wrap">
+    <p class="kicker">what it does</p>
+    <h2>One text field, most of your Mac behind it</h2>
+    <p class="lead">Everything below ships in the one binary. Nothing phones home, nothing upsells, nothing needs an extension store.</p>
+    <div class="grid">
+      <div class="card">
+        <div class="n">launch</div>
+        <h3>Launch and switch apps</h3>
+        <p>Fuzzy search that learns your habits: integer frecency with a 14 day half-life, and a strong match always wins. <code>saf</code> is Safari by day two.</p>
+      </div>
+      <div class="card">
+        <div class="n">windows</div>
+        <h3>Window management</h3>
+        <p>Halves, thirds, quarters, maximize, center, move between displays. Type <code>window left half</code>, or alias it to <code>lh</code>.</p>
+      </div>
+      <div class="card">
+        <div class="n">switcher</div>
+        <h3>Window switcher</h3>
+        <p><code>win</code> lists every window of every app. Return focuses it, wherever it lives.</p>
+      </div>
+      <div class="card">
+        <div class="n">menus</div>
+        <h3>Menu item search</h3>
+        <p><code>menu export</code> finds "File &gt; Export as PDF" in the frontmost app and presses it for you.</p>
+      </div>
+      <div class="card">
+        <div class="n">clipboard</div>
+        <h3>Clipboard history</h3>
+        <p><code>clip</code> searches everything you copied; Return pastes it into the app you came from. Password manager secrets are never captured: concealed pasteboard types are respected.</p>
+      </div>
+      <div class="card">
+        <div class="n">paths</div>
+        <h3>Path browser and Quick Look</h3>
+        <p>Paste any path, even quoted, shell-escaped, or <code>file://</code> forms, and get Open, Reveal, Quick Look, Copy Path. Return drills into folders, so <code>~/ge</code> walks the tree without Finder.</p>
+      </div>
+      <div class="card">
+        <div class="n">files</div>
+        <h3>File search</h3>
+        <p><code>file report</code> ranks a fast local index of your directories; Spotlight backfills what the index misses.</p>
+      </div>
+      <div class="card">
+        <div class="n">calculator</div>
+        <h3>Exact math, inline</h3>
+        <p>Type <code>0.1 + 0.2</code> and get exactly <code>0.3</code>: fixed point, no float drift. Units (<code>5 km in mi</code>), bases (<code>255 in hex</code>), percent (<code>200 * 15%</code>).</p>
+      </div>
+      <div class="card">
+        <div class="n">snippets</div>
+        <h3>Snippets</h3>
+        <p><code>snip</code> expands text with <code>{date}</code>, <code>{time}</code>, <code>{clipboard}</code>, and <code>{cursor}</code> placeholders, pasted where you were typing.</p>
+      </div>
+      <div class="card">
+        <div class="n">quicklinks</div>
+        <h3>Quicklinks</h3>
+        <p><code>go google rust launcher</code> opens the search, properly percent-encoded. Parameterized URLs with <code>{query}</code> placeholders.</p>
+      </div>
+      <div class="card">
+        <div class="n">emoji</div>
+        <h3>Emoji and symbols</h3>
+        <p><code>emoji fire</code> pastes the glyph where you were. Plus arrows, math, currency, and mac key glyphs.</p>
+      </div>
+      <div class="card">
+        <div class="n">dev utils</div>
+        <h3>Developer utilities</h3>
+        <p><code>uuid</code>, <code>b64</code>, <code>sha256</code>, <code>json</code> pretty-print, <code>epoch</code>, <code>count</code>. Return copies the answer.</p>
+      </div>
+      <div class="card">
+        <div class="n">system</div>
+        <h3>System commands</h3>
+        <p>Sleep, lock, empty trash, toggle dark mode, volume, quit frontmost, restart Finder.</p>
+      </div>
+      <div class="card">
+        <div class="n">scripts</div>
+        <h3>Script commands</h3>
+        <p>Drop an annotated executable in <code>~/.beckon/scripts/</code> and it becomes a command. Any language with a shebang.</p>
+      </div>
+      <div class="card">
+        <div class="n">plugins</div>
+        <h3>Plugins, no SDK</h3>
+        <p>A plugin is any executable speaking JSON-RPC 2.0 over stdio, in any language. Three methods, forty lines of stdlib Python in the example. <a href="https://github.com/jonathanpopham/beckon/blob/main/docs/PLUGINS.md">The protocol &#8599;</a></p>
+      </div>
+      <div class="card">
+        <div class="n">walkthrough</div>
+        <h3>First-run walkthrough</h3>
+        <p>On a fresh install, Return on the blank panel starts a guided tour: seven steps, one Return each, taught inside the launcher itself. Type anything to skip.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="bet">
+  <div class="wrap">
+    <p class="kicker">the bet</p>
+    <h2>The launcher you press a hundred times a day should be a program you can read</h2>
+    <p class="lead">Not a subscription, not a webview, not an npm tree. <em>Same inputs, same ranking, byte for byte, forever.</em></p>
+    <div class="bet">
+      <div class="b">
+        <div class="t"><b>zero</b> dependencies</div>
+        <p>Two Rust crates, std only. No wrapper crates, no webview, no JS runtime, no build.rs. The dependency audit is part of the gate.</p>
+      </div>
+      <div class="b">
+        <div class="t"><b>hand-rolled</b> FFI</div>
+        <p>The macOS shell talks to AppKit, Carbon, CoreGraphics, and the Accessibility APIs through hand-rolled Objective-C and C FFI. The engine underneath builds and tests anywhere, including Linux CI.</p>
+      </div>
+      <div class="b">
+        <div class="t"><b>deterministic</b> ranking</div>
+        <p>No floats in ranking paths. Fixed-point integers, no clock reads outside injected parameters, and golden tests for every ranking behavior.</p>
+      </div>
+      <div class="b">
+        <div class="t"><b>airgap</b> pure</div>
+        <p>Zero network calls in the shipped build, enforced by a no-network audit. No telemetry, no account, no update pings. <code class="inl">std::net</code> is forbidden in both crates.</p>
+      </div>
+      <div class="b">
+        <div class="t"><b>your</b> data</div>
+        <p>Clipboard history, snippets, frecency, and settings are plain files in <code class="inl">~/.beckon/</code>. Readable, greppable, syncable, yours.</p>
+      </div>
+      <div class="b">
+        <div class="t"><b>no</b> LLM in the build</div>
+        <p>Nothing model-backed ships in the default binary, ever. Anything that wants the network sits behind a cargo feature that is off by default.</p>
+      </div>
+    </div>
+    <div class="gateline">One gate: <b>350+ tests</b> behind a single <b>verify script</b> (fmt, clippy with denied warnings, the full suite, a zero-dependency audit, a no-network audit). CI is a thin wrapper around it.</div>
+  </div>
+</section>
+
+<section id="customize">
+  <div class="wrap">
+    <p class="kicker">make it yours</p>
+    <h2>One config file is the truth</h2>
+    <p class="lead">Everything lives in plain files under <code class="inl">~/.beckon/</code>. This is <code class="inl">config.json</code>, and every key is optional.</p>
+    <div class="cfg">
+      <div>
+        <div class="codeblock">
+          <div class="cbar"><span class="cl">~/.beckon/config.json</span><button class="copy" type="button">copy</button></div>
+          <pre>{
+  <span class="k">"aliases"</span>:     { <span class="k">"lh"</span>: <span class="s">"window.left-half"</span> },
+  <span class="k">"hotkey"</span>:      { <span class="k">"key"</span>: <span class="s">"space"</span>, <span class="k">"modifiers"</span>: [<span class="s">"opt"</span>] },
+  <span class="k">"max_results"</span>: 9,
+  <span class="k">"theme"</span>:       { <span class="k">"background"</span>: <span class="s">"#1C1C21"</span>, <span class="k">"foreground"</span>: <span class="s">"#FFFFFF"</span>,
+                   <span class="k">"accent"</span>: <span class="s">"#5AC8FA"</span>, <span class="k">"font_size"</span>: 22 },
+  <span class="k">"triggers"</span>:    { <span class="k">"v"</span>: <span class="s">"clip"</span> }
+}</pre>
+        </div>
+        <div class="codeblock">
+          <div class="cbar"><span class="cl">prefer &#8984;&#8679;space? change the summon shortcut</span><button class="copy" type="button">copy</button></div>
+          <pre>{<span class="k">"hotkey"</span>: {<span class="k">"key"</span>: <span class="s">"space"</span>, <span class="k">"modifiers"</span>: [<span class="s">"cmd"</span>, <span class="s">"shift"</span>]}}</pre>
+        </div>
+      </div>
+      <ul class="cfglist">
+        <li><b>aliases</b> point any shorthand at any command id, or rewrite into any trigger. <code class="inl">lh</code> becomes "window left half".</li>
+        <li><b>hotkey</b> is the summon shortcut: a key plus modifiers (<code class="inl">opt</code>, <code class="inl">cmd</code>, <code class="inl">ctrl</code>, <code class="inl">shift</code>). The example on the left moves it to Cmd+Shift+Space.</li>
+        <li><b>theme</b> sets background, foreground, accent, and font size. The defaults are the colors of this page.</li>
+        <li><b>triggers</b> rename the keyword sources (<code class="inl">clip</code>, <code class="inl">win</code>, <code class="inl">file</code>, <code class="inl">menu</code>, <code class="inl">emoji</code>, <code class="inl">snip</code>, <code class="inl">go</code>), so <code class="inl">v</code> can be your clipboard.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section id="install">
+  <div class="wrap">
+    <p class="kicker">install</p>
+    <h2>Three ways in</h2>
+    <div class="inst">
+      <div>
+        <h3>Homebrew <span>· recommended</span></h3>
+        <div class="codeblock">
+          <div class="cbar"><span class="cl">terminal</span><button class="copy" type="button" data-copy="brew install --cask jonathanpopham/tap/beckon">copy</button></div>
+          <pre>brew install --cask jonathanpopham/tap/beckon</pre>
+        </div>
+        <p class="blocknote">Add <code class="inl">--no-quarantine</code> to skip the Gatekeeper prompt for this ad-hoc-signed build.</p>
+      </div>
+      <div>
+        <h3>Install script</h3>
+        <div class="codeblock">
+          <div class="cbar"><span class="cl">terminal</span><button class="copy" type="button" data-copy="curl -fsSL https://raw.githubusercontent.com/jonathanpopham/beckon/main/scripts/install.sh | sh">copy</button></div>
+          <pre>curl -fsSL https://raw.githubusercontent.com/jonathanpopham/beckon/main/scripts/install.sh | sh</pre>
+        </div>
+      </div>
+      <div>
+        <h3>From source</h3>
+        <div class="codeblock">
+          <div class="cbar"><span class="cl">terminal</span><button class="copy" type="button" data-copy="git clone https://github.com/jonathanpopham/beckon
+cd beckon
+scripts/bundle.sh
+open dist/Beckon.app">copy</button></div>
+          <pre>git clone https://github.com/jonathanpopham/beckon
+cd beckon
+scripts/bundle.sh
+open dist/Beckon.app</pre>
+        </div>
+      </div>
+    </div>
+    <div class="notes">
+      <div class="row"><span class="k">autostart</span><span>Add Beckon.app to System Settings &gt; Login Items to start it at login.</span></div>
+      <div class="row"><span class="k">permission</span><span>Window management and paste ask for one Accessibility grant. beckon offers the prompt when a feature first needs it and degrades gracefully until then.</span></div>
+      <div class="row"><span class="k">first run</span><span>Press Option+Space, then Return on the blank panel for the built-in walkthrough.</span></div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <p class="g">MIT licensed. No trackers, no frameworks, no external requests on this page either.</p>
+    <span class="links">
+      <a href="https://github.com/jonathanpopham/beckon">github</a>
+      <a href="https://github.com/jonathanpopham/beckon/blob/main/docs/PLUGINS.md">plugins</a>
+      <a href="https://github.com/jonathanpopham/beckon/blob/main/LICENSE">license</a>
+      <a href="https://jonathanpopham.com">by jonathan popham</a>
+    </span>
+  </div>
+</footer>
+
+<script>
+(function(){
+  var demos=[
+    {q:"window left half",rows:[
+      ["Window: Left Half","move the focused window · alias it to lh"],
+      ["Window: Left Third","thirds, quarters, maximize, center"],
+      ["Window: Move to Next Display","send it to the other screen"]]},
+    {q:"saf",rows:[
+      ["Safari","open · frecency learns this, a strong match always wins"],
+      ["Safari Technology Preview","/Applications"]]},
+    {q:"clip invoice",rows:[
+      ["Invoice #4821 · net 30, due Aug 14","copied 2h ago · return pastes into the app you left"],
+      ["invoices-2026-07.csv","copied yesterday · password fields are never captured"]]},
+    {q:"0.1 + 0.2",rows:[
+      ["= 0.3","exactly · fixed point, no float drift · return copies"],
+      ["255 in hex = 0xFF","units, bases, and percent work too"]]}
+  ];
+  var qEl=document.getElementById('demo-q'),rEl=document.getElementById('demo-rows');
+  if(!qEl||!rEl)return;
+  var reduced=matchMedia('(prefers-reduced-motion: reduce)').matches,di=0;
+  function render(rows){
+    rEl.textContent='';
+    rows.forEach(function(r,i){
+      var d=document.createElement('div');d.className=i===0?'prow sel':'prow';
+      var t=document.createElement('div');t.className='pt';t.textContent=r[0];
+      var s=document.createElement('div');s.className='ps';s.textContent=r[1];
+      d.appendChild(t);d.appendChild(s);rEl.appendChild(d);
+    });
+  }
+  function cycle(){
+    var d=demos[di%demos.length];di++;
+    if(reduced){qEl.textContent=d.q;render(d.rows);setTimeout(cycle,6000);return;}
+    var i=0;qEl.textContent='';rEl.textContent='';
+    (function tick(){
+      if(i<d.q.length){qEl.textContent+=d.q.charAt(i);i++;setTimeout(tick,80);}
+      else{setTimeout(function(){render(d.rows);setTimeout(cycle,3800);},220);}
+    })();
+  }
+  cycle();
+})();
+(function(){
+  document.querySelectorAll('.copy').forEach(function(b){
+    b.addEventListener('click',function(){
+      var text=b.getAttribute('data-copy')||b.closest('.codeblock').querySelector('pre').textContent;
+      function done(){b.textContent='copied';setTimeout(function(){b.textContent='copy';},1400);}
+      if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(text).then(done,done);}
+    });
+  });
+})();
+</script>
+</body>
+</html>
