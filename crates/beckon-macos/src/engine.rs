@@ -33,8 +33,8 @@
 
 use crate::ffi::{self, msg, Bool, Id};
 use crate::{
-    apps, files, hotkey, menubar, onboarding, panel, paste, pasteboard, scriptcmd, switcher,
-    system, theme, ui, winmgmt,
+    apps, files, hotkey, menubar, onboarding, panel, paste, pasteboard, plugins, scriptcmd,
+    switcher, system, theme, ui, winmgmt,
 };
 use beckon_core::config::{self, Config};
 use beckon_core::frecency::FrecencyStore;
@@ -85,6 +85,9 @@ enum Entry {
     /// Run a script command via scriptcmd::activate; output-mode stdout
     /// lands on the clipboard.
     Script { id: String },
+    /// Ask a plugin what to do; its action maps onto the existing copy,
+    /// paste, and open paths.
+    Plugin { id: String },
 }
 
 struct Engine {
@@ -101,6 +104,10 @@ struct Engine {
     /// Script `@beckon.keyword` annotations as implicit aliases:
     /// keyword -> `script.<file name>` id. Refreshed with `scripts`.
     script_keywords: BTreeMap<String, String>,
+    /// Plugin trigger keywords (keyword -> plugin name), discovered once
+    /// at init; consulted after the config trigger table so a user
+    /// rename can never be shadowed by a plugin.
+    plugin_keywords: BTreeMap<String, String>,
     frecency: FrecencyStore,
     frecency_path: PathBuf,
     snippets: SnippetStore,
@@ -331,6 +338,11 @@ pub fn init() {
     }
     let (scripts, script_keywords) = script_snapshot();
 
+    // Plugins: discovery only (each plugin process spawns on first use);
+    // their trigger keywords sit behind the config table in keyword_rows.
+    plugins::start();
+    let plugin_keywords: BTreeMap<String, String> = plugins::keywords().into_iter().collect();
+
     let frecency_path = root.join(FRECENCY_FILE);
     let mut frecency = load_frecency(&frecency_path);
     // Entries decayed to zero are dead weight; drop them at the shell
@@ -377,6 +389,7 @@ pub fn init() {
             commands,
             scripts,
             script_keywords,
+            plugin_keywords,
             frecency,
             frecency_path,
             snippets,
@@ -523,7 +536,14 @@ impl Engine {
     fn keyword_rows(&mut self, keyword: &str, rest: &str) -> Option<Vec<ui::RowData>> {
         // Clone the canonical name to end the borrow of self.config
         // before the &mut self source calls below.
-        let source = self.config.triggers.get(keyword)?.clone();
+        let Some(source) = self.config.triggers.get(keyword).cloned() else {
+            // Not a built-in trigger; plugins get the keyword next, so a
+            // user rename in config always wins over a plugin.
+            if self.plugin_keywords.contains_key(keyword) {
+                return Some(self.plugin_rows(keyword, rest));
+            }
+            return None;
+        };
         match source.as_str() {
             "clip" => Some(self.clip_rows(rest)),
             "win" => Some(self.window_rows(rest)),
@@ -537,6 +557,13 @@ impl Engine {
             // through to search rather than panicking on a hand-built one.
             _ => None,
         }
+    }
+
+    /// Rows from a plugin trigger: the plugin answers beckon.query over
+    /// its stdio pipe; activation asks it for an action.
+    fn plugin_rows(&mut self, keyword: &str, rest: &str) -> Vec<ui::RowData> {
+        let items = plugins::query(keyword, rest);
+        self.trigger_rows(items, |id| Entry::Plugin { id })
     }
 
     /// The single row for an alias that names an item id: the exact id
@@ -840,6 +867,26 @@ fn handle_activate(index: usize) {
             }
             // Failure keeps the panel up so the error context survives.
             Err(e) => eprintln!("beckon: script {id} failed: {e}"),
+        },
+        Entry::Plugin { id } => match plugins::activate(&id) {
+            Ok(plugins::PluginAction::None) => dismiss(),
+            Ok(plugins::PluginAction::Copy(text)) => {
+                if copy_to_clipboard(&text) {
+                    pasteboard::note_own_write();
+                    dismiss();
+                } else {
+                    eprintln!("beckon: pasteboard write failed");
+                }
+            }
+            Ok(plugins::PluginAction::Paste(text)) => copy_then_paste(&text),
+            Ok(plugins::PluginAction::Open(url)) => {
+                if open_url(&url) {
+                    dismiss();
+                } else {
+                    eprintln!("beckon: could not open {url}");
+                }
+            }
+            Err(e) => eprintln!("beckon: plugin activation failed: {e}"),
         },
         Entry::Link { id, url } => {
             if open_url(&url) {

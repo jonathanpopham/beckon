@@ -44,7 +44,6 @@
 //!
 //! The integrator wires [`keywords`], [`query`], and [`activate`] into
 //! the engine after merge; until then this module is unreferenced.
-#![allow(dead_code)]
 
 use beckon_core::router::{Item, ItemKind};
 use beckon_core::rpc;
