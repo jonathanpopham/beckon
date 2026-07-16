@@ -3,29 +3,18 @@
 //! defaults) lives in beckon-core's config module; this file is the shell
 //! edge that converts channels to AppKit colors via panel::set_colors.
 //!
-//! Integrator wiring (this wave lands the parts, the integrator connects
-//! them; nothing here is called yet):
-//!
-//!   1. In engine::init, after the store root resolves, load the config:
-//!      `config::load(&root.join(config::CONFIG_FILE))`, falling back to
-//!      `Config::default()` on missing (and logging plus defaulting on
-//!      corrupt, like the other stores).
-//!   2. Call `theme::apply(&Theme::from_config(&config))` after
-//!      panel::init so the panel and query field restyle before first
-//!      show.
-//!   3. Rows: ui.rs is not touched by this wave. When row styling is
-//!      wired, ui.rs should call `theme::row_style()` where it creates or
-//!      styles row text; title text uses `foreground`, the selection
-//!      highlight uses `accent`, and `font_size` scales row fonts if
-//!      desired. Until then rows keep their built-in colors.
+//! Wiring (landed): engine::init loads the config after the store root
+//! resolves and calls `theme::apply(&Theme::from_config(&config))`.
+//! engine::init runs after panel::init in shell::run, so the panel and
+//! query field restyle before first show. ui.rs reads [`row_style`] when
+//! it renders rows: title text uses `foreground` (the subtitle dims it),
+//! the selected row's title uses `accent` as the selection highlight,
+//! and `font_size` scales the row fonts relative to the default 22pt.
+//! The default theme reproduces the built-in look exactly.
 //!
 //! Threading: apply() must run on the main thread (it calls into
 //! panel.rs); row_style() is safe from the main thread callbacks ui.rs
 //! runs in. State is stored in packed atomics, std only.
-
-// Nothing references this module until the integrator wires engine::init
-// to it (see the module docs); the allow retires with that wiring.
-#![allow(dead_code)]
 
 use crate::panel;
 use beckon_core::config::{self, Config};

@@ -3,17 +3,18 @@
 //! no Accessibility permission, and fires even when another app is
 //! frontmost.
 //!
-//! The default hotkey definition lives here in one place (KEY_CODE and
-//! MODIFIERS); the config file feeds [`register_with`] instead, with the
-//! keycode from `beckon_core::config::keycode_for` and the mask from
-//! [`carbon_modifiers`].
+//! The config file feeds [`register_with`] (via engine::hotkey_chord),
+//! with the keycode from `beckon_core::config::keycode_for` and the mask
+//! from [`carbon_modifiers`]. KEY_CODE and MODIFIERS keep the built-in
+//! Option+Space chord in one place as the engine's fallback pieces.
 
 use std::ffi::c_void;
 use std::ptr;
 
-/// kVK_Space from Carbon's Events.h.
+/// kVK_Space from Carbon's Events.h; the engine's keycode fallback.
 pub const KEY_CODE: u32 = 49;
-/// Carbon modifier mask: optionKey. The default chord is Option+Space.
+/// Carbon modifier mask: optionKey. The default chord is Option+Space;
+/// the engine falls back to this mask if a config yields no modifiers.
 pub const MODIFIERS: u32 = OPTION_KEY;
 
 // Carbon modifier masks from Carbon's Events.h (cmdKey, shiftKey,
@@ -86,7 +87,6 @@ extern "C" fn hotkey_handler(
 /// Carbon modifier mask. Total by design: unknown names contribute
 /// nothing, because `beckon_core::config::parse` already rejected them;
 /// this function only translates. An empty list yields 0.
-#[allow(dead_code)] // the integrator feeds this from the loaded config
 pub fn carbon_modifiers(mods: &[&str]) -> u32 {
     let mut mask = 0;
     for m in mods {
@@ -99,12 +99,6 @@ pub fn carbon_modifiers(mods: &[&str]) -> u32 {
         };
     }
     mask
-}
-
-/// Register the default Option+Space chord. Kept so existing callers
-/// compile; it calls straight through to [`register_with`].
-pub fn register(callback: extern "C" fn()) -> Result<(), OSStatus> {
-    register_with(KEY_CODE, MODIFIERS, callback)
 }
 
 /// Register a global hotkey and route presses to `callback`. `key_code`

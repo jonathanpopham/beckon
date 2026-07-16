@@ -39,8 +39,10 @@
 //! (default: run quietly, Ok carries the empty string) or `output`
 //! (Ok carries trimmed stdout for the integrator to show as a row or
 //! copy). `title` defaults to the file name minus its final extension.
-//! `subtitle` and `keyword` are parsed and carried on [`Script`] for the
-//! integrator (`keyword` is reserved for the alias pass); the [`Item`]
+//! `subtitle` and `keyword` are parsed and carried on [`Script`];
+//! `keyword` acts as an implicit alias in the engine's alias pass
+//! (typing the keyword surfaces the script as the top row, with config
+//! aliases taking precedence). The [`Item`]
 //! subtitle itself is always the ~-abbreviated path plus the mode, so
 //! every row says what file runs and how.
 //!
@@ -67,11 +69,6 @@
 //! scripts directory does not exist yet, it is created with a README
 //! documenting this grammar plus one annotated executable example
 //! (`hello.sh`). An existing directory is never touched.
-
-// Not wired into the engine yet: the integrator connects items(),
-// activate(), scripts(), and ensure_dir_with_example() after the wave-7
-// merge, so everything here is dead code until then.
-#![allow(dead_code)]
 
 use beckon_core::persist;
 use beckon_core::router::{Item, ItemKind};
@@ -132,10 +129,14 @@ pub struct Script {
     /// Annotation title, or the file name stem when unannotated.
     pub title: String,
     /// `@beckon.subtitle`, if present.
+    // Parsed and carried for a future richer row rendering; only tests
+    // read it today (the Item subtitle is the path plus the mode).
+    #[allow(dead_code)]
     pub subtitle: Option<String>,
     /// `@beckon.mode`, defaulting to silent.
     pub mode: Mode,
-    /// `@beckon.keyword`, if present; reserved for the alias pass.
+    /// `@beckon.keyword`, if present; the engine treats it as an
+    /// implicit alias to this script's id.
     pub keyword: Option<String>,
 }
 
@@ -372,6 +373,7 @@ pub fn scripts() -> Vec<Script> {
 }
 
 /// Uncached scan-and-map, used by tests against fixture directories.
+#[cfg(test)]
 fn items_in(dir: &Path) -> Vec<Item> {
     let mut warned = BTreeSet::new();
     scan_dir(dir, &mut warned).iter().map(to_item).collect()
@@ -482,6 +484,7 @@ pub fn activate(id: &str) -> Result<String, String> {
 /// Test seam for [`activate`]: same lookup and execution, but against
 /// an explicit directory, without the process-wide cache, and with a
 /// caller-chosen timeout so the timeout test finishes in milliseconds.
+#[cfg(test)]
 fn activate_in(dir: &Path, id: &str, timeout_ms: u64) -> Result<String, String> {
     let mut warned = BTreeSet::new();
     let scripts = scan_dir(dir, &mut warned);

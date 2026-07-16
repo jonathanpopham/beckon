@@ -9,8 +9,10 @@
 //! Flags: `--version` prints and exits; `--smoke` runs the automated shell
 //! self-test with no user input: show the panel, round-trip an NSString,
 //! then drive the real query pipeline end to end (app search rows, the
-//! inline calculator, activation copying to the pasteboard, and frecency
-//! persistence under a temp BECKON_HOME), exiting 0 on success;
+//! bootstrapped hello.sh script command surfacing in the ranked pool,
+//! the default theme row style reading back, the inline calculator,
+//! activation copying to the pasteboard, and frecency persistence under
+//! a temp BECKON_HOME), exiting 0 on success;
 //! `--index-apps` (macOS only) prints one "title<TAB>id<TAB>path" line per
 //! indexed application and exits.
 //!
@@ -89,7 +91,7 @@ mod shell {
     //! module only glues them together.
 
     use crate::ffi::{self, msg, Bool, Id, Sel};
-    use crate::{engine, hotkey, panel, ui};
+    use crate::{engine, hotkey, panel, theme, ui};
     use beckon_core::frecency::FrecencyStore;
     use std::mem::transmute;
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -105,6 +107,7 @@ mod shell {
     static SMOKE: AtomicBool = AtomicBool::new(false);
     static SMOKE_SHOWED: AtomicBool = AtomicBool::new(false);
     static SMOKE_SEARCHED: AtomicBool = AtomicBool::new(false);
+    static SMOKE_SCRIPTED: AtomicBool = AtomicBool::new(false);
     static SMOKE_CALCED: AtomicBool = AtomicBool::new(false);
     static SMOKE_FRECENCY: AtomicBool = AtomicBool::new(false);
     static SMOKE_HID: AtomicBool = AtomicBool::new(false);
@@ -165,6 +168,11 @@ mod shell {
                     "v@:@",
                 ),
                 (
+                    "beckonSmokeScript:",
+                    transmute::<extern "C" fn(Id, Sel, Id), ffi::Imp>(smoke_script),
+                    "v@:@",
+                ),
+                (
                     "beckonSmokeCalc:",
                     transmute::<extern "C" fn(Id, Sel, Id), ffi::Imp>(smoke_calc),
                     "v@:@",
@@ -210,10 +218,16 @@ mod shell {
     }
 
     extern "C" fn did_finish_launching(this: Id, _sel: Sel, _note: Id) {
-        match hotkey::register(hotkey_pressed) {
-            Ok(()) => println!("beckon: ready; press Option+Space to summon the panel"),
+        // The chord comes from the loaded config (engine::init ran in
+        // shell::run, before the run loop started); the engine getter
+        // already applied the built-in Option+Space fallbacks.
+        let (key_code, modifiers, label) = engine::hotkey_chord();
+        match hotkey::register_with(key_code, modifiers, hotkey_pressed) {
+            Ok(()) => println!("beckon: ready; press {label} to summon the panel"),
             Err(status) => {
-                eprintln!("beckon: hotkey registration failed (OSStatus {status}); is Option+Space taken?");
+                eprintln!(
+                    "beckon: hotkey registration failed (OSStatus {status}); is {label} taken?"
+                );
             }
         }
         if SMOKE.load(Ordering::Relaxed) {
@@ -338,6 +352,36 @@ mod shell {
             top.title, top.subtitle, cmd_top.title
         );
         // Safety: as in did_finish_launching.
+        unsafe { perform_after(this, "beckonSmokeScript:", 0.2) };
+    }
+
+    /// Step 2b: script commands and the theme. engine::init ran
+    /// ensure_dir_with_example against the smoke BECKON_HOME, so a fresh
+    /// scripts dir holds the annotated hello.sh and a query for "hello"
+    /// must surface its row from the ranked pool. Activation is NOT
+    /// exercised here (subprocess timing in a smoke step is flaky; the
+    /// scriptcmd tests cover execution). The default theme's row style
+    /// must also read back, proving theme::apply ran at init.
+    extern "C" fn smoke_script(this: Id, _sel: Sel, _obj: Id) {
+        type_query("hello");
+        let rows = ui::row_count();
+        let script_ok = (0..rows)
+            .filter_map(ui::row_at)
+            .any(|r| r.title == "Hello from beckon");
+        let style = theme::row_style();
+        let theme_ok = style
+            == Some(theme::RowStyle {
+                foreground: (0xFF, 0xFF, 0xFF),
+                accent: (0x5A, 0xC8, 0xFA),
+                font_size: 22,
+            });
+        let ok = script_ok && theme_ok;
+        SMOKE_SCRIPTED.store(ok, Ordering::Relaxed);
+        println!(
+            "smoke: script rows={rows} hello_row_found={script_ok} \
+             theme_row_style={style:?} theme_default_ok={theme_ok}"
+        );
+        // Safety: as in did_finish_launching.
         unsafe { perform_after(this, "beckonSmokeCalc:", 0.2) };
     }
 
@@ -414,6 +458,7 @@ mod shell {
         }
         let ok = SMOKE_SHOWED.load(Ordering::Relaxed)
             && SMOKE_SEARCHED.load(Ordering::Relaxed)
+            && SMOKE_SCRIPTED.load(Ordering::Relaxed)
             && SMOKE_CALCED.load(Ordering::Relaxed)
             && SMOKE_FRECENCY.load(Ordering::Relaxed)
             && SMOKE_HID.load(Ordering::Relaxed);
