@@ -93,6 +93,9 @@ enum Entry {
     /// Show walkthrough step `next` on Return (one past the end
     /// finishes the tour and retires the blank-screen row).
     Walkthrough { next: usize },
+    /// A home-screen discovery slot: Return types the example query so
+    /// the user sees the feature live.
+    Tip { query: String },
     /// An informational row; Return does nothing.
     Noop,
 }
@@ -128,6 +131,9 @@ struct Engine {
     /// When true (fresh install, blank query), Return on the default
     /// selection starts the walkthrough instead of launching row 0.
     blank_return_tour: bool,
+    /// Summon counter; rotates the home screen's discovery and tail
+    /// slots so every summon teaches something different.
+    summons: u64,
 }
 
 static ENGINE: OnceLock<Mutex<Engine>> = OnceLock::new();
@@ -418,6 +424,7 @@ pub fn init() {
             results: Vec::new(),
             footer: "",
             blank_return_tour: false,
+            summons: 0,
         }))
         .is_err()
     {
@@ -448,6 +455,8 @@ pub fn summon() {
         eng.apps = fresh;
         eng.scripts = scripts;
         eng.script_keywords = script_keywords;
+        // Rotate the home view's discovery and tail slots.
+        eng.summons = eng.summons.wrapping_add(1);
     }
     // Kick a background re-walk so file results track the disk; the call
     // coalesces if a walk is already running.
@@ -546,13 +555,15 @@ impl Engine {
             }
         }
         match QueryIntent::parse(raw) {
-            // Empty query: a pure frecency list (recent habits first,
-            // then alphabetical), so a fresh install shows the
-            // alphabetical head of the app index. Until the walkthrough
-            // has been finished once, a grey footer hint offers the
-            // tour and a bare Return (default selection) starts it.
+            // Empty query: the home view. Your most-used items lead
+            // (frecency across apps, commands, and scripts), rotating
+            // discovery slots teach the surface, and two tail slots
+            // resurface other things you have used. Never an
+            // alphabetical app dump. Until the walkthrough is finished,
+            // a grey footer hint offers the tour and a bare Return
+            // (default selection) starts it.
             QueryIntent::Empty => {
-                let rows = self.search_rows("", now);
+                let rows = self.home_rows(now);
                 if !walkthrough::is_done() {
                     self.blank_return_tour = true;
                     self.footer = walkthrough::FOOTER_HINT;
@@ -633,6 +644,70 @@ impl Engine {
             title: item.title,
             subtitle: item.subtitle,
         }])
+    }
+
+    /// The blank-screen home view: [most-used] + [rotating discovery] +
+    /// [rotating personal tail]. Cold start (nothing used yet) doubles
+    /// the discovery slots instead of showing an app dump.
+    fn home_rows(&mut self, now: u64) -> Vec<ui::RowData> {
+        self.results.clear();
+        let mut rows = Vec::new();
+
+        let mut pool = self.apps.clone();
+        pool.extend(self.commands.iter().cloned());
+        pool.extend(self.scripts.iter().cloned());
+        let mut used: Vec<(i64, &Item)> = pool
+            .iter()
+            .map(|i| (self.frecency.score(&i.id, now), i))
+            .filter(|(s, _)| *s > 0)
+            .collect();
+        used.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.title.cmp(&b.1.title)));
+
+        // Section 1: the memory. Your top three across everything.
+        for (_, item) in used.iter().take(3) {
+            self.results.push(entry_for(item));
+            rows.push(ui::RowData {
+                title: item.title.clone(),
+                subtitle: item.subtitle.clone(),
+            });
+        }
+
+        // Section 2: discovery. Rotates per summon through the tour's
+        // example curriculum; Return types the example for you.
+        let tips = walkthrough::tips();
+        if !tips.is_empty() {
+            let slots = if used.is_empty() { 6 } else { 3 }.min(tips.len());
+            let start = (self.summons as usize).wrapping_mul(slots) % tips.len();
+            for k in 0..slots {
+                let (q, why) = tips[(start + k) % tips.len()];
+                self.results.push(Entry::Tip {
+                    query: q.to_string(),
+                });
+                rows.push(ui::RowData {
+                    title: format!("try: {q}"),
+                    subtitle: why.to_string(),
+                });
+            }
+        }
+
+        // Section 3: the tail. Two slots rotating through everything
+        // else you have used, so old habits resurface.
+        let tail: Vec<&(i64, &Item)> = used.iter().skip(3).collect();
+        if !tail.is_empty() {
+            let start = self.summons as usize % tail.len();
+            for k in 0..2.min(tail.len()) {
+                let (_, item) = tail[(start + k) % tail.len()];
+                self.results.push(entry_for(item));
+                rows.push(ui::RowData {
+                    title: item.title.clone(),
+                    subtitle: item.subtitle.clone(),
+                });
+            }
+        }
+
+        rows.truncate(self.config.max_results);
+        self.results.truncate(self.config.max_results);
+        rows
     }
 
     /// Rank apps, commands, and scripts together against `query` and
@@ -992,6 +1067,11 @@ fn handle_activate(index: usize) {
             pathnav::PathAction::None => {}
         },
         Entry::Walkthrough { next } => show_walkthrough_step(next),
+        Entry::Tip { query } => {
+            // Teach by doing: type the example into the field and run it.
+            panel::set_query(&query);
+            handle_query(&query);
+        }
         Entry::Noop => {}
         Entry::Plugin { id } => match plugins::activate(&id) {
             Ok(plugins::PluginAction::None) => dismiss(),

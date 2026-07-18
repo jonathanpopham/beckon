@@ -25,6 +25,13 @@ cd "$(dirname "$0")/.."
 SIGN_ID="-"
 if [ "${1:-}" = "--sign" ]; then
   SIGN_ID="${2:?--sign needs an identity}"
+elif security find-identity -v -p codesigning 2>/dev/null | grep -q '"beckon-selfsign"'; then
+  # A stable local identity keeps TCC grants (Accessibility etc.) across
+  # rebuilds; ad-hoc signatures change every build and orphan the grant,
+  # which shows up as "Settings says granted but macOS keeps prompting".
+  # Mint one with: openssl req -x509 (codeSigning EKU), import to the
+  # login keychain, security add-trusted-cert -p codeSign.
+  SIGN_ID="beckon-selfsign"
 fi
 
 VERSION=$(grep -m1 '^version' Cargo.toml | sed 's/.*"\(.*\)"/\1/')

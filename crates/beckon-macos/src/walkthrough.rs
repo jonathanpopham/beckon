@@ -31,66 +31,63 @@ pub struct Step {
 pub const STEPS: &[Step] = &[
     Step {
         title: "Welcome to beckon",
-        summary: "type to search, Return to launch; it learns your habits",
+        summary: "type to search; it learns your habits",
         examples: &[
-            ("saf", "fuzzy matches Safari; launching teaches the ranking"),
-            ("terminal", "every app, /Applications and /System alike"),
+            ("saf", "fuzzy matches Safari"),
+            ("terminal", "every app on the Mac"),
         ],
     },
     Step {
         title: "Drive your windows",
-        summary: "window actions and a switcher, no mouse involved",
+        summary: "window actions, no mouse",
         examples: &[
-            ("window left half", "halves, thirds, quarters, displays"),
-            ("win", "every open window of every app; Return focuses it"),
-            ("menu export", "search the frontmost app's entire menu bar"),
+            ("window left half", "halves, thirds, quarters"),
+            ("win", "switch to any open window"),
+            ("menu export", "search the app's menus"),
         ],
     },
     Step {
-        title: "Your clipboard remembers",
-        summary: "everything you copy, searchable; secrets are never captured",
+        title: "Clipboard history",
+        summary: "secrets are never captured",
         examples: &[
-            ("clip", "recent copies; Return pastes into the app you left"),
-            ("clip invoice", "search inside your clipboard history"),
+            ("clip", "Return pastes it back"),
+            ("clip invoice", "search your history"),
         ],
     },
     Step {
         title: "Stop hunting files",
-        summary: "paste any path or walk the tree from the keyboard",
+        summary: "walk the disk from the keyboard",
         examples: &[
-            ("~/", "browse home; Return drills into folders"),
-            (
-                "~/Downloads/report.pdf",
-                "Open, Reveal, Quick Look, Copy Path",
-            ),
-            ("file report", "fuzzy file search with Spotlight backfill"),
+            ("~/", "browse; Return drills in"),
+            ("~/Downloads", "Open, Reveal, Quick Look"),
+            ("file report", "fuzzy file search"),
         ],
     },
     Step {
         title: "It does math properly",
-        summary: "fixed-point arithmetic, units, bases, and dev utilities",
+        summary: "exact answers, no float drift",
         examples: &[
-            ("0.1 + 0.2", "exactly 0.3; Return copies the answer"),
-            ("5 km in mi", "units, temperatures, data sizes, bases"),
-            ("uuid", "plus b64, sha256, json, epoch, count"),
+            ("0.1 + 0.2", "exactly 0.3"),
+            ("5 km in mi", "units and bases"),
+            ("uuid", "b64, sha256, epoch too"),
         ],
     },
     Step {
         title: "The deep cuts",
-        summary: "emoji, snippets, quicklinks, scripts, plugins",
+        summary: "emoji, snippets, quicklinks",
         examples: &[
-            ("emoji fire", "Return pastes the glyph where you were"),
-            ("snip", "snippets with {date}, {clipboard}, {cursor}"),
-            ("go google anything", "parameterized quicklinks"),
+            ("emoji fire", "Return pastes the glyph"),
+            ("snip", "snippets with {date}"),
+            ("go google rust", "quicklinks with {query}"),
         ],
     },
     Step {
         title: "Make it yours",
-        summary: "plain files in ~/.beckon; the config file is the truth",
+        summary: "plain files in ~/.beckon",
         examples: &[
-            ("~/.beckon/config.json", "aliases, hotkey, theme, triggers"),
-            ("~/.beckon/scripts", "annotated executables become commands"),
-            ("hello", "the bootstrapped example script is already there"),
+            ("~/.beckon/config.json", "hotkey, theme, aliases"),
+            ("~/.beckon/scripts", "scripts become commands"),
+            ("hello", "the example script"),
         ],
     },
 ];
@@ -121,20 +118,25 @@ pub fn step_rows(index: usize) -> Option<Vec<(String, String, bool)>> {
     let step = STEPS.get(index)?;
     let last = index + 1 == STEPS.len();
     let lead = if last {
-        format!("\u{2713} {} (Return to finish)", step.title)
+        format!("\u{2713} {}", step.title)
     } else {
-        format!(
-            "\u{25B8} Step {}/{}: {} (Return to continue)",
-            index + 1,
-            STEPS.len(),
-            step.title
-        )
+        format!("\u{25B8} {}/{} {}", index + 1, STEPS.len(), step.title)
     };
     let mut rows = vec![(lead, step.summary.to_string(), true)];
     for (query, why) in step.examples {
         rows.push((format!("try: {query}"), (*why).to_string(), false));
     }
     Some(rows)
+}
+
+/// Every example from every step as one flat (query, why) list: the
+/// home view's rotating discovery slots draw from this, so the tour and
+/// the home screen teach from the same curriculum.
+pub fn tips() -> Vec<(&'static str, &'static str)> {
+    STEPS
+        .iter()
+        .flat_map(|s| s.examples.iter().copied())
+        .collect()
 }
 
 /// The grey footer hint on a fresh install's blank screen. Return
@@ -170,12 +172,31 @@ mod tests {
             if i + 1 == STEPS.len() {
                 assert!(rows[0].0.starts_with('\u{2713}'));
             } else {
-                assert!(rows[0]
-                    .0
-                    .contains(&format!("Step {}/{}", i + 1, STEPS.len())));
+                assert!(rows[0].0.contains(&format!("{}/{}", i + 1, STEPS.len())));
             }
         }
         assert!(step_rows(STEPS.len()).is_none());
+    }
+
+    #[test]
+    fn every_row_fits_the_panel_width() {
+        // Rows render title plus subtitle on one unwrapped line; at the
+        // panel's width and fonts, roughly 62 combined characters fit.
+        // This budget is what keeps tour text from clipping.
+        const BUDGET: usize = 62;
+        for i in 0..STEPS.len() {
+            for (title, subtitle, _) in step_rows(i).unwrap() {
+                let total = title.chars().count() + subtitle.chars().count();
+                assert!(
+                    total <= BUDGET,
+                    "step {i} row too wide ({total} > {BUDGET}): {title:?} {subtitle:?}"
+                );
+            }
+        }
+        for (q, why) in tips() {
+            let total = "try: ".len() + q.chars().count() + why.chars().count();
+            assert!(total <= BUDGET, "tip too wide: {q:?} {why:?}");
+        }
     }
 
     #[test]

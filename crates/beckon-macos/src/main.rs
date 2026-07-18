@@ -299,7 +299,7 @@ mod shell {
         let invite_ok = panel::footer().contains("walkthrough")
             && ui::row_at(0).unwrap_or_default().title != "\u{25B8} Take the walkthrough";
         let _ = send_command("insertNewline:");
-        let step1_ok = ui::row_at(0).unwrap_or_default().title.contains("Step 1/")
+        let step1_ok = ui::row_at(0).unwrap_or_default().title.contains("1/")
             && panel::footer().contains("exit");
         for _ in 0..walkthrough::STEPS.len() {
             let _ = send_command("insertNewline:");
