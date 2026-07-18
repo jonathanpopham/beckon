@@ -127,6 +127,14 @@ pub fn activate(id: &str) -> Result<(), String> {
 /// against their current screen), then size, then position once more:
 /// when the window was too large for the destination the first move may
 /// have been clamped by the app while still at the old size.
+///
+/// The three writes are best-effort: a transient AX failure on one (a busy
+/// app letting a single message time out) must NOT abort the sequence, or
+/// the window is left moved but not resized, the classic symptom. So the
+/// per-call errors are ignored on the first pass and the outcome is judged
+/// by reading the frame back. If it did not land (an app that clamped, or
+/// applied the writes out of order), one corrective pass runs and this time
+/// surfaces a real refusal.
 fn apply(win: &ax::FocusedWindow, r: Rect) -> Result<(), String> {
     let origin = NSPoint {
         x: r.x as f64,
@@ -136,10 +144,33 @@ fn apply(win: &ax::FocusedWindow, r: Rect) -> Result<(), String> {
         width: r.w as f64,
         height: r.h as f64,
     };
+    let _ = win.set_position(origin);
+    let _ = win.set_size(size);
+    let _ = win.set_position(origin);
+    if frame_matches(win, r) {
+        return Ok(());
+    }
     win.set_position(origin)?;
     win.set_size(size)?;
     win.set_position(origin)?;
     Ok(())
+}
+
+/// True when the window's current frame sits within a couple of points of
+/// the target on every edge. A read failure, or an app that clamps to a
+/// size it will not give up, reads as "not matched", which at worst
+/// triggers the single corrective pass in [`apply`].
+fn frame_matches(win: &ax::FocusedWindow, r: Rect) -> bool {
+    const TOL: i64 = 2;
+    match (win.position(), win.size()) {
+        (Ok(p), Ok(s)) => {
+            (round_i64(p.x) - r.x).abs() <= TOL
+                && (round_i64(p.y) - r.y).abs() <= TOL
+                && (round_i64(s.width) - r.w).abs() <= TOL
+                && (round_i64(s.height) - r.h).abs() <= TOL
+        }
+        _ => false,
+    }
 }
 
 /// Round a CGFloat crossing the FFI edge to whole points. With frames

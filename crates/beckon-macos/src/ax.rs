@@ -102,6 +102,7 @@ extern "C" {
         attribute: CFStringRef,
         value: CFTypeRef,
     ) -> AXError;
+    fn AXUIElementSetMessagingTimeout(element: AXUIElementRef, timeout_seconds: f32) -> AXError;
     fn AXValueCreate(the_type: AXValueType, value_ptr: *const c_void) -> AXValueRef;
     fn AXValueGetValue(value: AXValueRef, the_type: AXValueType, value_ptr: *mut c_void)
         -> Boolean;
@@ -228,6 +229,19 @@ fn set_attr(element: &CfGuard, name: &str, value: &CfGuard) -> Result<(), String
     Ok(())
 }
 
+/// Bound how long any AX call to this element may block on the target app.
+/// Every read and write below is synchronous IPC into another process; on a
+/// busy or unresponsive app the default timeout is long enough to look like
+/// beckon hung. Best effort: if the framework refuses the hint the (longer)
+/// default still applies.
+fn set_messaging_timeout(element: &CfGuard, seconds: f32) {
+    // Safety: element is a live guarded AXUIElement; the call only records
+    // the timeout on it. The AXError result is advisory here.
+    unsafe {
+        let _ = AXUIElementSetMessagingTimeout(element.as_ptr(), seconds);
+    }
+}
+
 /// True when macOS has granted this process (or its responsible process,
 /// for an unbundled binary run from a terminal) the Accessibility
 /// permission.
@@ -318,8 +332,12 @@ pub fn focused_window() -> Result<FocusedWindow, String> {
                 .map_err(|e| format!("no frontmost application: {e}"))?
         }
     };
+    // Never let a slow app hang the launcher: bound every AX call on this
+    // app and, once resolved, its window.
+    set_messaging_timeout(&app, 1.0);
     let window = copy_attr(&app, "AXFocusedWindow")
         .map_err(|e| format!("no focused window on the frontmost app: {e}"))?;
+    set_messaging_timeout(&window, 1.0);
     Ok(FocusedWindow { window })
 }
 
