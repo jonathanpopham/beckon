@@ -293,6 +293,28 @@ fn item_for(name: &str, path: &str, home: &str) -> Item {
 /// [`LOCAL_MIN_ROWS`], Spotlight hits are deduped by path and appended
 /// up to [`RESULT_CAP`]. Never blocks on the index build: a build in
 /// flight simply means a partial (or empty) local tier.
+/// The in-memory tier only: instant, no subprocess, safe to run on the
+/// main thread per keystroke. This is what the engine blends into the
+/// main search; the full [`items`] (Spotlight tiers included) runs
+/// mdfind synchronously and belongs behind the explicit file trigger,
+/// where the user asked for thoroughness and will forgive a beat.
+pub fn items_local(query: &str) -> Vec<Item> {
+    let q = query.trim();
+    if q.is_empty() {
+        return Vec::new();
+    }
+    start();
+    let home = home_string();
+    let local = {
+        let s = state().lock().unwrap();
+        rank_local(q, &s.entries, RESULT_CAP)
+    };
+    local
+        .iter()
+        .map(|e| item_for(&e.name, &e.path, &home))
+        .collect()
+}
+
 pub fn items(query: &str) -> Vec<Item> {
     let q = query.trim();
     if q.is_empty() {

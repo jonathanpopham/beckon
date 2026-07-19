@@ -732,10 +732,13 @@ impl Engine {
         }
         // Files fill the remaining slots: a query that misses every app
         // and command must never show an empty panel when a filename
-        // matches. Apps and commands keep priority; the dedicated "file"
-        // trigger remains the full file view.
+        // matches. ONLY the in-memory tier runs here: this executes per
+        // keystroke on the main thread, and the Spotlight tiers shell
+        // out to mdfind (measured 0.8s name, 6.4s content on this
+        // machine), which is a frozen panel. The "file" trigger keeps
+        // the thorough tiers.
         if !query.is_empty() && rows.len() < self.config.max_results {
-            for item in files::items(query) {
+            for item in files::items_local(query) {
                 if rows.len() >= self.config.max_results {
                     break;
                 }

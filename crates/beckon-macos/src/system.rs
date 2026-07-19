@@ -89,6 +89,88 @@ struct Spec {
 
 /// Every system command, in registry order. The order is fixed here (not
 /// sorted at runtime) so items() is deterministic by construction.
+/// System Settings panes, openable by their long-stable URL scheme ids
+/// (macOS 13+ extension identifiers; an id macOS does not recognize
+/// still opens the Settings window, so unknown-pane failure is soft).
+/// Titles end in "Settings" so queries like "keyboard" rank them.
+const SETTINGS_PANES: &[(&str, &str, &str)] = &[
+    (
+        "keyboard",
+        "Keyboard Settings",
+        "com.apple.Keyboard-Settings.extension",
+    ),
+    (
+        "displays",
+        "Displays Settings",
+        "com.apple.Displays-Settings.extension",
+    ),
+    (
+        "bluetooth",
+        "Bluetooth Settings",
+        "com.apple.BluetoothSettings",
+    ),
+    (
+        "wifi",
+        "Wi-Fi Settings",
+        "com.apple.wifi-settings-extension",
+    ),
+    (
+        "battery",
+        "Battery Settings",
+        "com.apple.Battery-Settings.extension",
+    ),
+    (
+        "sound",
+        "Sound Settings",
+        "com.apple.Sound-Settings.extension",
+    ),
+    (
+        "notifications",
+        "Notifications Settings",
+        "com.apple.Notifications-Settings.extension",
+    ),
+    (
+        "appearance",
+        "Appearance Settings",
+        "com.apple.Appearance-Settings.extension",
+    ),
+    (
+        "accessibility",
+        "Accessibility Settings",
+        "com.apple.Accessibility-Settings.extension",
+    ),
+    (
+        "privacy",
+        "Privacy & Security Settings",
+        "com.apple.settings.PrivacySecurity.extension",
+    ),
+    (
+        "trackpad",
+        "Trackpad Settings",
+        "com.apple.Trackpad-Settings.extension",
+    ),
+    (
+        "dock",
+        "Desktop & Dock Settings",
+        "com.apple.Desktop-Settings.extension",
+    ),
+    (
+        "software-update",
+        "Software Update Settings",
+        "com.apple.Software-Update-Settings.extension",
+    ),
+    (
+        "network",
+        "Network Settings",
+        "com.apple.Network-Settings.extension",
+    ),
+    (
+        "screen-time",
+        "Screen Time Settings",
+        "com.apple.Screen-Time-Settings.extension",
+    ),
+];
+
 const SPECS: &[Spec] = &[
     Spec {
         id: "system.sleep",
@@ -161,6 +243,13 @@ fn spawn(parts: &[&str]) -> Mechanism {
 /// are lines of one script, so variables carry across them. Returns None
 /// for ids this module does not own.
 fn mechanism(id: &str) -> Option<Mechanism> {
+    if let Some(slug) = id.strip_prefix("settings.") {
+        let (_, _, pane) = SETTINGS_PANES.iter().find(|(s, _, _)| *s == slug)?;
+        return Some(spawn(&[
+            "/usr/bin/open",
+            &format!("x-apple.systempreferences:{pane}"),
+        ]));
+    }
     match id {
         "system.sleep" => Some(spawn(&["/usr/bin/pmset", "sleepnow"])),
         "system.lock-screen" => Some(Mechanism::Call {
@@ -213,10 +302,19 @@ fn mechanism(id: &str) -> Option<Mechanism> {
 /// description, kind = SystemCommand. The list is a constant, so order
 /// and content are deterministic by construction.
 pub fn items() -> Vec<Item> {
-    SPECS
+    let mut out: Vec<Item> = SPECS
         .iter()
         .map(|s| Item::new(s.id, s.title, s.subtitle, ItemKind::SystemCommand))
-        .collect()
+        .collect();
+    out.extend(SETTINGS_PANES.iter().map(|(slug, title, _)| {
+        Item::new(
+            &format!("settings.{slug}"),
+            title,
+            "Open in System Settings",
+            ItemKind::SystemCommand,
+        )
+    }));
+    out
 }
 
 /// Execute the system command `id`. An unknown id is an Err, never a
@@ -320,11 +418,30 @@ mod tests {
                 "system.volume-down",
                 "system.quit-frontmost",
                 "system.restart-finder",
+                "settings.keyboard",
+                "settings.displays",
+                "settings.bluetooth",
+                "settings.wifi",
+                "settings.battery",
+                "settings.sound",
+                "settings.notifications",
+                "settings.appearance",
+                "settings.accessibility",
+                "settings.privacy",
+                "settings.trackpad",
+                "settings.dock",
+                "settings.software-update",
+                "settings.network",
+                "settings.screen-time",
             ]
         );
         for item in &items {
             assert_eq!(item.kind, ItemKind::SystemCommand);
-            assert!(item.id.starts_with("system."), "bad id: {}", item.id);
+            assert!(
+                item.id.starts_with("system.") || item.id.starts_with("settings."),
+                "bad id: {}",
+                item.id
+            );
             assert!(!item.title.is_empty());
             assert!(!item.subtitle.is_empty(), "no subtitle on {}", item.id);
             assert!(
