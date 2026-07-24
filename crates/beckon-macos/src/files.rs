@@ -38,7 +38,11 @@
 //! [`fuzzy::score`] on the file name, score descending with a
 //! deterministic tie-break by path, capped at [`RESULT_CAP`]; Spotlight
 //! hits are deduped by path and appended only when the local tier runs
-//! thin. [`activate`] opens the file or folder in its default app via
+//! thin. A query containing `/` is treated as a path hint: the local
+//! tier scores it against the full path (no file NAME contains a slash,
+//! so name scoring could never match), and the Spotlight tier matches
+//! the leaf segment by name while the remaining segments must appear in
+//! the hit's path, in order. [`activate`] opens the file or folder in its default app via
 //! NSWorkspace openURL: (the supported, synchronous-BOOL API, so failure
 //! is observable), falling back to /usr/bin/open if AppKit declines.
 //!
@@ -237,13 +241,70 @@ fn walk_dir(dir: &Path, depth: usize, max_depth: usize, out: &mut Vec<Entry>, ca
     }
 }
 
+/// The exact row for a slash query that names a real filesystem entry
+/// relative to $HOME ("quadron-diligence/report.pdf" when that file
+/// exists). One stat, no subprocess, so it is safe per keystroke, and it
+/// is the only way the in-memory tier can surface files outside the
+/// indexed roots (top-level home directories are indexed at depth 1, so
+/// their contents are not in the index). Absolute and `~/` shapes are
+/// path intent's business, not ours.
+fn exact_home_relative(query: &str, home: &str) -> Option<Entry> {
+    if home.is_empty() || !query.contains('/') || query.starts_with('/') || query.starts_with('~') {
+        return None;
+    }
+    let rel = query.strip_suffix('/').unwrap_or(query);
+    if rel.is_empty() {
+        return None;
+    }
+    let path = format!("{home}/{rel}");
+    let meta = std::fs::metadata(&path).ok()?;
+    let name = rel.rsplit('/').find(|s| !s.is_empty())?.to_string();
+    Some(Entry {
+        name,
+        path,
+        is_dir: meta.is_dir(),
+    })
+}
+
+/// The last non-empty `/`-segment of a query: what filename matching
+/// runs against ("quadron-diligence/report.pdf" yields "report.pdf",
+/// "docs/" yields "docs"). A query with no slash is its own leaf.
+fn leaf_segment(query: &str) -> &str {
+    query.rsplit('/').find(|s| !s.is_empty()).unwrap_or(query)
+}
+
+/// Whether every non-empty `/`-segment of `query` appears in `path`,
+/// case-insensitively and in order, each match starting after the
+/// previous one ends. This is the path-hint filter for Spotlight hits on
+/// slash queries: FSName matching only sees the leaf, so the directory
+/// segments the user typed must be checked against the full path here.
+fn path_matches_segments(path: &str, query: &str) -> bool {
+    let path_lower = path.to_lowercase();
+    let mut pos = 0;
+    for seg in query.split('/').filter(|s| !s.is_empty()) {
+        let seg_lower = seg.to_lowercase();
+        match path_lower[pos..].find(&seg_lower) {
+            Some(i) => pos += i + seg_lower.len(),
+            None => return false,
+        }
+    }
+    true
+}
+
 /// Rank `entries` against `query` by fuzzy score on the name, descending,
 /// with a deterministic tie-break by path ascending, capped at `cap`.
-/// Non-matching entries are dropped.
+/// Non-matching entries are dropped. A query containing `/` scores
+/// against the full path instead: no name contains a slash, so name
+/// scoring would drop every entry, and today's behavior for slash
+/// queries (nothing) makes path scoring purely additive.
 fn rank_local(query: &str, entries: &[Entry], cap: usize) -> Vec<Entry> {
+    let path_query = query.contains('/');
     let mut scored: Vec<(i64, &Entry)> = entries
         .iter()
-        .filter_map(|e| fuzzy::score(query, &e.name).map(|m| (m.score, e)))
+        .filter_map(|e| {
+            let hay = if path_query { &e.path } else { &e.name };
+            fuzzy::score(query, hay).map(|m| (m.score, e))
+        })
         .collect();
     scored.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.path.cmp(&b.1.path)));
     scored.truncate(cap);
@@ -288,16 +349,18 @@ fn item_for(name: &str, path: &str, home: &str) -> Item {
 }
 
 /// File rows for `query`, ready for the registry. Empty (or all
-/// whitespace) queries return nothing. Local index rows come first,
+/// whitespace) queries return nothing. An exact home-relative hit
+/// ([`exact_home_relative`]) leads, then local index rows
 /// ranked by [`rank_local`]; when they number fewer than
 /// [`LOCAL_MIN_ROWS`], Spotlight hits are deduped by path and appended
 /// up to [`RESULT_CAP`]. Never blocks on the index build: a build in
 /// flight simply means a partial (or empty) local tier.
-/// The in-memory tier only: instant, no subprocess, safe to run on the
-/// main thread per keystroke. This is what the engine blends into the
-/// main search; the full [`items`] (Spotlight tiers included) runs
-/// mdfind synchronously and belongs behind the explicit file trigger,
-/// where the user asked for thoroughness and will forgive a beat.
+/// The in-memory tier only: no subprocess, at most one stat (the exact
+/// home-relative check), safe to run on the main thread per keystroke.
+/// This is what the engine blends into the main search; the full
+/// [`items`] (Spotlight tiers included) runs mdfind synchronously and
+/// belongs behind the explicit file trigger, where the user asked for
+/// thoroughness and will forgive a beat.
 pub fn items_local(query: &str) -> Vec<Item> {
     let q = query.trim();
     if q.is_empty() {
@@ -309,10 +372,21 @@ pub fn items_local(query: &str) -> Vec<Item> {
         let s = state().lock().unwrap();
         rank_local(q, &s.entries, RESULT_CAP)
     };
-    local
-        .iter()
-        .map(|e| item_for(&e.name, &e.path, &home))
-        .collect()
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut out: Vec<Item> = Vec::new();
+    if let Some(e) = exact_home_relative(q, &home) {
+        seen.insert(e.path.clone());
+        out.push(item_for(&e.name, &e.path, &home));
+    }
+    for e in &local {
+        if out.len() >= RESULT_CAP {
+            break;
+        }
+        if seen.insert(e.path.clone()) {
+            out.push(item_for(&e.name, &e.path, &home));
+        }
+    }
+    out
 }
 
 pub fn items(query: &str) -> Vec<Item> {
@@ -328,19 +402,40 @@ pub fn items(query: &str) -> Vec<Item> {
         let s = state().lock().unwrap();
         rank_local(q, &s.entries, RESULT_CAP)
     };
-    let mut seen: HashSet<String> = local.iter().map(|e| e.path.clone()).collect();
-    let mut out: Vec<Item> = local
-        .iter()
-        .map(|e| item_for(&e.name, &e.path, &home))
-        .collect();
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut out: Vec<Item> = Vec::new();
+    if let Some(e) = exact_home_relative(q, &home) {
+        seen.insert(e.path.clone());
+        out.push(item_for(&e.name, &e.path, &home));
+    }
+    for e in &local {
+        if out.len() >= RESULT_CAP {
+            break;
+        }
+        if seen.insert(e.path.clone()) {
+            out.push(item_for(&e.name, &e.path, &home));
+        }
+    }
     if out.len() < LOCAL_MIN_ROWS {
-        append_spotlight(spotlight(q), &mut seen, &mut out, &home);
+        let mut hits = spotlight(q);
+        // A slash query's directory segments filter the hits; the plain
+        // FSName match only saw the leaf.
+        if q.contains('/') {
+            hits.retain(|(_, path)| path_matches_segments(path, q));
+        }
+        append_spotlight(hits, &mut seen, &mut out, &home);
     }
     // Last resort: nothing under $HOME is even NAMED like the query, so
     // ask Spotlight to match document contents ("resume" finds the
-    // resume PDF whatever its file name is).
+    // resume PDF whatever its file name is). Content search gets the
+    // leaf segment: a path-shaped string never appears inside documents.
     if out.is_empty() {
-        append_spotlight(spotlight_content(q), &mut seen, &mut out, &home);
+        append_spotlight(
+            spotlight_content(leaf_segment(q)),
+            &mut seen,
+            &mut out,
+            &home,
+        );
     }
     out
 }
@@ -375,10 +470,10 @@ fn append_spotlight(
 /// Tier 2: ask Spotlight for filename matches under $HOME. Returns
 /// (file name, absolute path) pairs, at most [`SPOTLIGHT_LINE_CAP`].
 ///
-/// Invocation, exactly:
+/// Invocation, exactly (`<leaf>` is [`leaf_segment`] of the query):
 ///
 /// ```text
-/// /usr/bin/mdfind -onlyin "$HOME" "kMDItemFSName == '*<query>*'c"
+/// /usr/bin/mdfind -onlyin "$HOME" "kMDItemFSName == '*<leaf>*'c"
 /// ```
 ///
 /// The `c` modifier makes the comparison case-insensitive and the `*`
@@ -390,7 +485,10 @@ fn append_spotlight(
 /// most the cap in lines and then killing and waiting on the child, which
 /// both bounds the work and reaps the process.
 pub fn spotlight(query: &str) -> Vec<(String, String)> {
-    match sanitize_spotlight(query) {
+    // FSName is a bare file name and never contains a slash, so a slash
+    // query matches on its leaf segment; the caller filters hits by the
+    // directory segments.
+    match sanitize_spotlight(leaf_segment(query)) {
         Some(s) => run_mdfind(&format!("kMDItemFSName == '*{s}*'c")),
         None => Vec::new(),
     }
@@ -654,6 +752,73 @@ mod tests {
     fn rank_drops_non_matches_entirely() {
         let entries = vec![entry("alpha.txt", "/a"), entry("beta.txt", "/b")];
         assert!(rank_local("zzz", &entries, 9).is_empty());
+    }
+
+    #[test]
+    fn slash_queries_rank_against_the_full_path() {
+        let entries = vec![
+            entry("report.pdf", "/Users/x/quadron-diligence/report.pdf"),
+            entry("report.pdf", "/Users/x/other/report.pdf"),
+        ];
+        // Name scoring can never match a slash query; path scoring finds
+        // exactly the entry whose path carries the directory hint.
+        let ranked = rank_local("quadron-diligence/report.pdf", &entries, 9);
+        assert_eq!(ranked.len(), 1);
+        assert_eq!(ranked[0].path, "/Users/x/quadron-diligence/report.pdf");
+        // Slash-free queries still rank by name only, both match here.
+        assert_eq!(rank_local("report", &entries, 9).len(), 2);
+    }
+
+    #[test]
+    fn exact_home_relative_resolves_real_paths_only() {
+        let t = TempTree::new("exact");
+        t.file("quadron/report.pdf");
+        t.dir("quadron/sub");
+        let home = t.0.to_str().unwrap();
+        let hit = exact_home_relative("quadron/report.pdf", home).unwrap();
+        assert_eq!(hit.name, "report.pdf");
+        assert_eq!(hit.path, format!("{home}/quadron/report.pdf"));
+        assert!(!hit.is_dir);
+        // A trailing slash still resolves, to the directory itself.
+        let dir = exact_home_relative("quadron/sub/", home).unwrap();
+        assert_eq!(dir.name, "sub");
+        assert!(dir.is_dir);
+        // Non-existent, slash-free, absolute, and tilde shapes all pass.
+        assert!(exact_home_relative("quadron/missing.pdf", home).is_none());
+        assert!(exact_home_relative("quadron", home).is_none());
+        assert!(exact_home_relative("/etc/hosts", home).is_none());
+        assert!(exact_home_relative("~/quadron/report.pdf", home).is_none());
+        assert!(exact_home_relative("quadron/report.pdf", "").is_none());
+    }
+
+    #[test]
+    fn leaf_segment_takes_the_last_nonempty_part() {
+        assert_eq!(leaf_segment("a/b/c.pdf"), "c.pdf");
+        assert_eq!(leaf_segment("docs/"), "docs");
+        assert_eq!(leaf_segment("plain"), "plain");
+        assert_eq!(leaf_segment("///"), "///");
+    }
+
+    #[test]
+    fn path_segments_filter_case_insensitively_in_order() {
+        let path = "/Users/x/quadron-diligence/Quadron-Assessment.pdf";
+        assert!(path_matches_segments(
+            path,
+            "quadron-diligence/quadron-assessment.pdf"
+        ));
+        assert!(path_matches_segments(path, "Quadron-Diligence/Assessment"));
+        // Segments out of order do not match.
+        assert!(!path_matches_segments(
+            path,
+            "Assessment.pdf/quadron-diligence"
+        ));
+        // A segment absent from the path does not match.
+        assert!(!path_matches_segments(
+            path,
+            "elsewhere/Quadron-Assessment.pdf"
+        ));
+        // The trailing slash of a browse-style query is not a segment.
+        assert!(path_matches_segments(path, "quadron-diligence/"));
     }
 
     #[test]
